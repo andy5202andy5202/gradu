@@ -1,0 +1,6 @@
+*.log
+*.xml
+__pycache__/
+*.sumocfg
+data/
+logs/

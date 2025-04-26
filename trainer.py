@@ -53,10 +53,14 @@ class VehicleTrainer(threading.Thread):
                     print(f"車輛 {self.vehicle_id} 完成訓練並回傳參數給 {self.edge_server.server_id}（版本 {self.model_version}）")
                 else:
                     print(f"[棄用模型] 車輛 {self.vehicle_id} 的模型版本 {self.global_version} ≠ {self.edge_server.server_id} 當前全局版本 {current_global_version} → 不上傳")
+                if self.vehicle_id in self.edge_server.active_training_threads:
+                    print(f"車輛 {self.vehicle_id} 訓練完成，回復為可選對象")
+                    self.edge_server.active_training_threads[self.vehicle_id]['trainer'] = None
             except KeyError:
                 print(f"車輛 {self.vehicle_id} 已經從 active_training_threads 中被移除，無法回傳模型。")
             except Exception as e:
                 print(f"[{self.vehicle_id}] 上傳模型時發生未知錯誤：{e}")
+        
 
 
     def stop(self):

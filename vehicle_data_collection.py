@@ -10,6 +10,9 @@ from global_server import GlobalServer
 from global_clock import GlobalClock  
 from simulation_thread import SimulationThread
 from edge_server_init import init_edge_servers
+import matplotlib
+matplotlib.use('Agg')  # 使用非 GUI 的 backend（不要 Tkinter / TkAgg）
+import matplotlib.pyplot as plt
 
 
 
@@ -23,14 +26,14 @@ cached_node_data = {}
 def preload_node_data():
     group_names = [f'g{i}' for i in range(9)]
     for group_name in group_names:
-        file_path = os.path.join(DATA_PATH, f'{group_name}.pkl')
+        file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
         if os.path.exists(file_path):
             try:
                 with open(file_path, 'rb') as f:
                     cached_node_data[group_name] = pickle.load(f)
-                    print(f"預載成功：{group_name}.pkl")
+                    print(f"預載成功：{group_name}_train.pkl")
             except Exception as e:
-                print(f"[錯誤] 載入 {group_name}.pkl 時失敗：{e}")
+                print(f"[錯誤] 載入 {group_name}_train.pkl 時失敗：{e}")
 
 # def get_data_for_vehicle(road_id):
 #     # 解析成真正的入口節點名稱
@@ -50,6 +53,20 @@ def preload_node_data():
 #         print(f"車輛從 {simple_node} 進入 → 分配資料集 {group}")
 #         return cached_node_data.get(group)
 #     return None
+
+import traci
+
+def get_entry_node_from_edge(edge_id):
+    """
+    根據 edge_id 取得 from node。
+    例如：'n_5_5_n_5_6' → 'n_5_5'
+    """
+    try:
+        return '_'.join(edge_id.split('_')[:3])
+    except Exception as e:
+        print(f"[錯誤] edge_id 解析失敗：{edge_id}, error: {e}")
+        return None
+
 
 
 if __name__ == '__main__':
@@ -87,19 +104,22 @@ if __name__ == '__main__':
         
         for vid in vehicle_ids:
             try:
-                position = traci.vehicle.getRoadID(vid)
+                if vid not in active_training_threads:
+                    route = traci.vehicle.getRoute(vid)
+                    if not route:
+                        continue  # 確保有 route 再繼續
+                    start_node = get_entry_node_from_edge(route[0])
+                    # data_for_vehicle = get_data_for_vehicle(start_node)
+                    if start_node not in ['n_1_5', 'n_3_5', 'n_5_5', 'n_1_3', 'n_3_3', 'n_5_3', 'n_1_1', 'n_3_1', 'n_5_1']:
+                        print(f"[警告] 車輛 {vid} 生成時的 entry_node {start_node} 不在資料 mapping 裡！")
+                        continue
 
-                if position.startswith('n'):
-                    start_node = position.strip()
-
-                    if vid not in active_training_threads:
-                        # data_for_vehicle = get_data_for_vehicle(start_node)
-                        active_training_threads[vid] = {
-                            "entry_node": start_node,
-                            "trainer": None
-                        }
-                        compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
-                        print(f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads。")
+                    active_training_threads[vid] = {
+                        "entry_node": start_node,
+                        "trainer": None
+                    }
+                    compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
+                    print(f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads。")
 
             except traci.exceptions.TraCIException:
                 print(f"[錯誤] 無法取得車輛 {vid} 的位置")

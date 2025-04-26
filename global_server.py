@@ -6,6 +6,8 @@ import time
 from train_utils import aggregate_models, calculate_loss_and_accuracy, create_dataloader
 from models.resnet import SmallResNet
 import logging
+import matplotlib
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
 import atexit
 
@@ -81,7 +83,7 @@ class GlobalServer(threading.Thread):
     def load_global_data(self, global_data_path):
         all_data = {'data': [], 'labels': []}
         for group_id in range(9):
-            file_path = os.path.join(global_data_path, f'g{group_id}.pkl')
+            file_path = os.path.join(global_data_path, f'g{group_id}_test.pkl')
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
                     data = pickle.load(f)
@@ -180,6 +182,7 @@ class GlobalServer(threading.Thread):
                 self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
                 self.loss_history.append(loss)
                 self.accuracy_history.append(accuracy)
+                self.save_training_plot()
 
                 if accuracy >= 85.0:
                     try:

@@ -85,7 +85,7 @@ class EdgeServer(threading.Thread):
     def is_in_range(self, edge_id):
         return edge_id in self.covered_edges
     
-    def get_data_for_vehicle(self,road_id,vehicle_id):
+    def get_data_for_vehicle(self,road_id,vehicle_id,mode='train'):
     # 解析成真正的入口節點名稱
         try:
             node = '_'.join(road_id.split('_')[:3])
@@ -101,7 +101,13 @@ class EdgeServer(threading.Thread):
         if group:
             simple_node = node.replace('_', '')
             print(f"車輛 {vehicle_id} 從 {simple_node} 進入 → 分配資料集 {group}")
-            return self.cached_node_data.get(group)
+            # print(self.cached_node_data.keys())
+            if group not in self.cached_node_data or not self.cached_node_data[group]:
+                print(f"[警告] 車輛 {vehicle_id} 分配到 {group} 但資料沒載入或是空資料！")
+                return None
+
+            return self.cached_node_data.get(f"{group}")
+        
         return None
         
     def run(self):
@@ -121,7 +127,7 @@ class EdgeServer(threading.Thread):
                 vehicles_in_area = []
                 active_threads_copy = self.active_training_threads.copy()
                 for vid, vehicle_info in active_threads_copy.items():
-                    if vehicle_info['trainer'] is None:  # 還沒開始訓練的車輛
+                    if vehicle_info.get('trainer') is None:  # 還沒開始訓練的車輛
                         if vid not in traci.vehicle.getIDList():
                             continue  # 該車輛已離開模擬，不要呼叫 getRoadID
                         try:

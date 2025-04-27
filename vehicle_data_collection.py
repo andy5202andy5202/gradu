@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 
 
-SUMO_BINARY = 'sumo-gui'
+SUMO_BINARY = 'sumo'
 CONFIG_FILE = 'grid7x7.sumocfg'
 DATA_PATH = os.path.join(os.getcwd(), 'cifar_non_iid')
 

@@ -2,6 +2,7 @@
 import threading
 import time
 import traci
+import torch
 
 class SimulationThread(threading.Thread):
     def __init__(self, step_limit=10000, real_time_step=1.0):
@@ -24,6 +25,8 @@ class SimulationThread(threading.Thread):
             elapsed = time.time() - start_time
             if elapsed < self.real_time_step:
                 time.sleep(self.real_time_step - elapsed)
+            show_gpu_usage()
+
 
         print("[SimulationThread] 結束 SUMO 模擬。")
         self.running = False
@@ -31,3 +34,11 @@ class SimulationThread(threading.Thread):
 
     def stop(self):
         self.running = False
+
+def show_gpu_usage():
+    print("="*30, " GPU Memory Usage ", "="*30)
+    for i in range(torch.cuda.device_count()):
+        print(f"[GPU {i}] {torch.cuda.get_device_name(i)}")
+        print(f"  Allocated: {round(torch.cuda.memory_allocated(i) / 1024**2, 1)} MB")
+        print(f"  Cached:    {round(torch.cuda.memory_reserved(i) / 1024**2, 1)} MB")
+    print("="*75)

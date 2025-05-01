@@ -104,17 +104,33 @@ def aggregate_models(models, self):
         versions = [m[1] for m in models]  # 每輛車的模型版本
         current_version = getattr(self, 'model_version', 0)
         delta = 1.0
-        staleness_list = [max(current_version - v, 0) for v in versions]
+
+        # 計算 staleness 並過濾掉比 server 還新的模型（s < 0）
+        filtered_models = []
+        staleness_list = []
+        for i, v in enumerate(versions):
+            s = current_version - v
+            if s >= 0:
+                filtered_models.append(models[i])
+                staleness_list.append(s)
+
+        if not filtered_models:
+            self.logger.info(f"{self.server_id} 本輪沒有合法模型參與聚合")
+            self.model_version -= 1
+            return self.model.state_dict()
+
         raw_weights = [1 / (1 + delta * s) for s in staleness_list]
         weight_sum = sum(raw_weights)
         weights = [w / weight_sum for w in raw_weights]
 
         self.logger.info(
-            f"{self.server_id} 使用 staleness-aware 聚合：\n"
-            f"→ 收到車輛模型版本 = {versions}\n"
-            f"→ Staleness 差值 = {[current_version - v for v in versions]}\n"
+            f"{self.server_id} 使用 staleness-aware 聚合:\n"
+            f"→ 使用的模型版本 = {[m[1] for m in filtered_models]}\n"
+            f"→ Staleness = {staleness_list}\n"
             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
         )
+
+        model_state_dicts = [m[0] for m in filtered_models]
 
     # ---------------------
     # 聚合模型

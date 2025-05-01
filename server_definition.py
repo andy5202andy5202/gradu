@@ -142,7 +142,7 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
 
                 # 隨機選擇最多三輛車來訓練
-                selected_vehicles = random.sample(vehicles_in_area, min(len(vehicles_in_area), 3))
+                selected_vehicles = random.sample(vehicles_in_area,min(len(vehicles_in_area),3))
                 # print(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")

@@ -8,7 +8,7 @@ import numpy as np
 import copy
 import traci
 
-def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001, device='cuda', loss_threshold=0.001):
+def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001, device='cuda', loss_threshold=0.001, logger=None):
     model.train()
 
     images = torch.tensor(train_data['data']).reshape(-1, 3, 32, 32).float() / 255.0
@@ -31,11 +31,15 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
             running_loss += loss.item()
 
         avg_loss = running_loss / len(dataloader)
-        print(f"車輛 {vehicle_id} - Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}")
+        # print(f"車輛 {vehicle_id} - Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}")
+        if logger:
+            logger.info(f"[{vehicle_id}] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
 
         # ===== Loss 判斷 =====
         if avg_loss < loss_threshold:
             print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+            if logger:
+                logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
             return model, avg_loss, True
 
         # ===== 位置判斷 =====
@@ -51,13 +55,20 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
 
                     if lane_pos >= lane_length - 5:
                         print(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
+                        if logger:
+                            logger.info(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
                         return model, avg_loss, True
+                        
             else:
                 print(f"車輛 {vehicle_id} 已離開模擬 → 結束訓練")
+                if logger:
+                    logger.info(f"車輛 {vehicle_id} 已離開模擬 → 結束訓練")
                 return model, avg_loss, True
 
         except traci.exceptions.TraCIException:
             print(f"TraCIException: 無法取得車輛 {vehicle_id} 的位置。該車輛已離開模擬環境→ 結束訓練")
+            if logger:
+                logger.info(f"TraCIException: 無法取得車輛 {vehicle_id} 的位置。該車輛已離開模擬環境→ 結束訓練")
             return model, avg_loss, True
 
     return model, avg_loss, False  # 沒提前結束，跑滿 epochs

@@ -148,62 +148,60 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")
                 
                 # 2. 啟動選中的車輛進行訓練
+                
                 for vid in selected_vehicles:
+                    
                     if vid not in self.active_training_threads:
                         self.logger.warning(f"{self.server_id} 車輛 {vid} 在選中後已離開系統，跳過。")
-                        continue  # 防止 KeyError
-                    
+                        continue
+
                     vehicle_info = self.active_training_threads[vid]
                     trainer_obj = vehicle_info.get('trainer')
-                    
+
                     if trainer_obj is not None and trainer_obj.is_alive():
                         self.logger.warning(f"{self.server_id} 車輛 {vid} 的 trainer 還在跑，跳過這輛車。")
-                        continue  # 不要重新開一個 thread
-                    
-                    
-                    if 'data' not in vehicle_info:  # 車輛被選到時才載入 data
+                        continue
+
+                    if 'data' not in vehicle_info:
                         entry_node = vehicle_info['entry_node']
-                        data_for_vehicle = self.get_data_for_vehicle(entry_node,vid)
-                        
+                        data_for_vehicle = self.get_data_for_vehicle(entry_node, vid)
                         if data_for_vehicle is None:
                             self.logger.warning(f"{self.server_id} 車輛 {vid} 找不到對應資料，跳過。")
                             continue
                         vehicle_info['data'] = data_for_vehicle
-                        
-                    self.logger.info(f"{self.server_id} 準備啟動車輛 {vid} 的 trainer 進行訓練")
-                    if vid in self.active_training_threads:
-                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, device=self.device)
-                        
-                        trainer.start()
-                        if not trainer.started_event.wait(timeout=1.0):
-                            self.logger.error(f"{self.server_id} 車輛 {vid} 的 trainer 啟動超時（超過1秒），跳過這輛車。")
-                            # 不把這個卡住的 trainer 放進 active_training_threads
-                            continue
-                        self.active_training_threads[vid]['trainer'] = trainer
-                        self.logger.info(f"車輛 {vid} 的 trainer 訓練已啟動")
-                    else:
-                        self.logger.warning(f"{self.server_id} 要訓練的車輛 {vid} 已被移除，略過。")
 
-                self.logger.info(f"{self.server_id} 選完車輛後，目前系統 thread 數量: {threading.active_count()}")
-                # 4. Slot 結束時進行聚合
+                    self.logger.info(f"{self.server_id} 準備啟動車輛 {vid} 的 trainer 進行訓練")
+
+                    try:
+                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, device=self.device)
+                        trainer.start()
+
+                        success = trainer.started_event.wait(timeout=1.0)
+                        if success:
+                            self.logger.info(f"{self.server_id} 車輛 {vid} 的 trainer 訓練已啟動")
+                            self.active_training_threads[vid]['trainer'] = trainer
+                        else:
+                            self.logger.error(f"{self.server_id} 車輛 {vid} 的 trainer 啟動超時（超過1秒），強制跳過這台車。")
+                            continue
+
+                    except Exception as e:
+                        self.logger.error(f"{self.server_id} 啟動車輛 {vid} 的 trainer 失敗，錯誤：{str(e)}，跳過這台車。")
+                        continue
+
+                    
                 while self.global_clock.get_time() < expected_slot_end:
                     time.sleep(0.1)
                     
                 if self.received_models:
-                    # print(f'{self.server_id} 正在聚合模型...')
-                    self.logger.info(f'{self.server_id} 正在聚合模型...')
-                    aggregated_state_dict = aggregate_models(self.received_models,self)
+                    self.logger.info(f"{self.server_id} 正在聚合收到的車輛模型...")
+                    aggregated_state_dict = aggregate_models(self.received_models, self)
                     self.model.load_state_dict(aggregated_state_dict)
-                    self.received_models = []
+                    self.received_models = []  # 清空
                     self.model_version += 1
-                    # print(f'{self.server_id} 完成聚合，模型版本更新為全局版本{self.global_server.model_version},本地版本{self.model_version}')
-                    self.logger.info(f'{self.server_id} 完成聚合，模型版本更新為全局版本{self.global_server.model_version},本地版本{self.model_version}')
+                    self.logger.info(f"{self.server_id} 完成聚合，本地模型版本更新為 {self.model_version}")
                 else:
-                    # print(f'{self.server_id} 本輪未收到參數，版本不更新')
-                    self.logger.info(f'{self.server_id} 本輪未收到參數，版本不更新')
-
-                # 5. Slot 完成，更新模型給下一輪車輛使用
-                
+                    self.logger.info(f"{self.server_id} 本輪沒有收到車輛模型，版本不變。")
+      
             # 結束後，將模型上傳到 Global Server
             self.global_server.received_models.append((self.model.state_dict(), self.model_version))
             # print(f'{self.server_id} 已將本地模型版本 {self.model_version} 上傳給 Global Server')

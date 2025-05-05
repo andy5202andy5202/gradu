@@ -13,10 +13,11 @@ from edge_server_init import init_edge_servers
 import matplotlib
 matplotlib.use('Agg')  # 使用非 GUI 的 backend（不要 Tkinter / TkAgg）
 import matplotlib.pyplot as plt
+import random
 
 
 
-SUMO_BINARY = 'sumo'
+SUMO_BINARY = 'sumo-gui'
 CONFIG_FILE = 'grid7x7.sumocfg'
 DATA_PATH = os.path.join(os.getcwd(), 'cifar_non_iid')
 
@@ -54,8 +55,6 @@ def preload_node_data():
 #         return cached_node_data.get(group)
 #     return None
 
-import traci
-
 def get_entry_node_from_edge(edge_id):
     """
     根據 edge_id 取得 from node。
@@ -67,9 +66,28 @@ def get_entry_node_from_edge(edge_id):
         print(f"[錯誤] edge_id 解析失敗：{edge_id}, error: {e}")
         return None
 
+def log(global_clock, message):
+    """用 GlobalClock 時間標記訊息，同時寫入 env.log"""
+    try:
+        timestamp = f"[GlobalClock] {global_clock.get_time():.1f}s"
+    except:
+        timestamp = "[GlobalClock] ??s"
+    
+    full_msg = f"{timestamp} - {message}"
+    print(full_msg)
+
+    # 寫入 env.log
+    with open("env.log", "a") as f:
+        f.write(full_msg + "\n")
+
 
 
 if __name__ == '__main__':
+    if os.path.exists("env.log"):
+        os.remove("env.log")
+    veh_log_path = os.path.join("veh", "veh.log")
+    if os.path.exists(veh_log_path):
+        os.remove(veh_log_path)
     traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
     pre_step = 0
     step = 0
@@ -85,8 +103,7 @@ if __name__ == '__main__':
         
     real_time_step = 1.0
         
-    sim_thread = SimulationThread(step_limit=50000, real_time_step=1.0)
-
+    sim_thread = SimulationThread(step_limit=10800, real_time_step=1.0)
     sim_thread.start()
     
     global_server.start()
@@ -94,7 +111,7 @@ if __name__ == '__main__':
     for server in edge_servers.values():
         server.start()
         
-    while sim_thread.step < 50000:
+    while sim_thread.step < 10800:
         start_time = time.time()
         
         vehicle_ids = traci.vehicle.getIDList()
@@ -110,22 +127,22 @@ if __name__ == '__main__':
                         continue  # 確保有 route 再繼續
                     start_node = get_entry_node_from_edge(route[0])
                     # data_for_vehicle = get_data_for_vehicle(start_node)
-                    if start_node not in ['n_1_5', 'n_3_5', 'n_5_5', 'n_1_3', 'n_3_3', 'n_5_3', 'n_1_1', 'n_3_1', 'n_5_1']:
-                        print(f"[警告] 車輛 {vid} 生成時的 entry_node {start_node} 不在資料 mapping 裡！")
-                        continue
 
                     active_training_threads[vid] = {
                         "entry_node": start_node,
-                        "trainer": None
+                        "trainer": None,
+                        "data_group": random.choice([f"g{i}" for i in range(9)])
                     }
                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
-                    print(f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads。")
+                    assigned = active_training_threads[vid]['data_group']
+                    log(global_clock,f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，分配到資料 {assigned}")
+
 
             except traci.exceptions.TraCIException:
-                print(f"[錯誤] 無法取得車輛 {vid} 的位置")
+                log(global_clock,f"[錯誤] 無法取得車輛 {vid} 的位置")
                 continue
             except Exception as e:
-                print(f"[未知錯誤] 處理車輛 {vid} 時發生例外：{e}")
+                log(global_clock,f"[未知錯誤] 處理車輛 {vid} 時發生例外：{e}")
                 continue
         # ----------------------------
         # 移除已離開的車輛（try 保護版本）
@@ -133,7 +150,7 @@ if __name__ == '__main__':
         for vid in list(active_training_threads.keys()):
             try:
                 if vid not in existing_vehicles:
-                    print(f"車輛 {vid} 離開模擬環境，移除 active_training_threads。")
+                    log(global_clock,f"車輛 {vid} 離開模擬環境，移除 active_training_threads。")
 
                     vehicle_info = active_training_threads.pop(vid, None)
 
@@ -147,7 +164,7 @@ if __name__ == '__main__':
 
                     torch.cuda.empty_cache()
             except Exception as e:
-                print(f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
+                log(global_clock,f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
                 
     sim_thread.join()
     traci.close()

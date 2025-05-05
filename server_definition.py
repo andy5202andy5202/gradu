@@ -85,30 +85,20 @@ class EdgeServer(threading.Thread):
     def is_in_range(self, edge_id):
         return edge_id in self.covered_edges
     
-    def get_data_for_vehicle(self,road_id,vehicle_id,mode='train'):
-    # 解析成真正的入口節點名稱
+    def get_data_for_vehicle(self, vehicle_id):
         try:
-            node = '_'.join(road_id.split('_')[:3])
-        except:
+            group = self.active_training_threads[vehicle_id].get('data_group')
+            if group is None:
+                print(f"[警告] 車輛 {vehicle_id} 沒有 data_group")
+                return None
+            if group not in self.cached_node_data:
+                print(f"[警告] 車輛 {vehicle_id} 分配到 {group} 但資料沒載入！")
+                return None
+            return self.cached_node_data[group]
+        except Exception as e:
+            print(f"[錯誤] EdgeServer 拿車輛 {vehicle_id} 的資料時錯誤：{e}")
             return None
 
-        mapping = {
-            'n_1_5': 'g0', 'n_3_5': 'g1', 'n_5_5': 'g2',
-            'n_1_3': 'g3', 'n_3_3': 'g4', 'n_5_3': 'g5',
-            'n_1_1': 'g6', 'n_3_1': 'g7', 'n_5_1': 'g8'
-        }
-        group = mapping.get(node)
-        if group:
-            simple_node = node.replace('_', '')
-            print(f"車輛 {vehicle_id} 從 {simple_node} 進入 → 分配資料集 {group}")
-            # print(self.cached_node_data.keys())
-            if group not in self.cached_node_data or not self.cached_node_data[group]:
-                print(f"[警告] 車輛 {vehicle_id} 分配到 {group} 但資料沒載入或是空資料！")
-                return None
-
-            return self.cached_node_data.get(f"{group}")
-        
-        return None
         
     def run(self):
         while True:
@@ -163,8 +153,7 @@ class EdgeServer(threading.Thread):
                         continue
 
                     if 'data' not in vehicle_info:
-                        entry_node = vehicle_info['entry_node']
-                        data_for_vehicle = self.get_data_for_vehicle(entry_node, vid)
+                        data_for_vehicle = self.get_data_for_vehicle(vid)
                         if data_for_vehicle is None:
                             self.logger.warning(f"{self.server_id} 車輛 {vid} 找不到對應資料，跳過。")
                             continue

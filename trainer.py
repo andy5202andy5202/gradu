@@ -26,7 +26,7 @@ class VehicleTrainer(threading.Thread):
         
         self.logger.info(f"{self.vehicle_id} 成功取得 model_state_dict (版本 {self.model_version})")
         
-        self.model = SmallResNet(num_classes=10).to(self.device)
+        self.model = SmallResNet(num_classes=9).to(self.device)
         
         self.logger.info(f"{self.vehicle_id} SmallResNet 模型建好並移到 {self.device}")
         
@@ -34,8 +34,8 @@ class VehicleTrainer(threading.Thread):
         
         self.logger.info(f"{self.vehicle_id} state_dict 載入完成")
         
-        self.epoch = 30
-        self.loss_threshold = 0.1
+        self.epoch = 90
+        self.loss_threshold = 0.01
         self.batch_size = 32
         self.learning_rate = 0.005
         self.trained = False

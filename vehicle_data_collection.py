@@ -99,14 +99,14 @@ if __name__ == '__main__':
     global_clock = GlobalClock()
     global_clock.start()  # 啟動全域時鐘
     
-    global_server = GlobalServer(global_data_path=DATA_PATH, total_edge_servers=9,upload_due_to_position=upload_due_to_position, T=120, global_clock = global_clock)
+    global_server = GlobalServer(global_data_path=DATA_PATH, total_edge_servers=4,upload_due_to_position=upload_due_to_position, T=120, global_clock = global_clock)
     # 定義 Edge Servers
     edge_servers = init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock, upload_due_to_position)
 
         
     real_time_step = 1.0
         
-    sim_thread = SimulationThread(step_limit=14400, real_time_step=1.0)
+    sim_thread = SimulationThread(step_limit=10800, real_time_step=1.0)
     sim_thread.start()
     
     global_server.start()
@@ -114,7 +114,7 @@ if __name__ == '__main__':
     for server in edge_servers.values():
         server.start()
         
-    while sim_thread.step < 14400:
+    while sim_thread.step < 10800:
         sim_thread.step_event.wait()     # 等待模擬 step 結束
         sim_thread.step_event.clear()    # 重置事件（準備下次等待）
         start_time = time.time()

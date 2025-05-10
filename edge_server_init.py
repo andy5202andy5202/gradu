@@ -1,6 +1,6 @@
 from server_definition import EdgeServer
 
-def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock):
+def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock, upload_due_to_position):
     edge0 = EdgeServer('Edge0', covered_edges={
         'n_0_4_n_0_5',
         'n_0_5_n_0_4',
@@ -22,7 +22,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_1_5_n_1_6',
         'n_1_5_n_1_4',
         'n_1_4_n_1_5'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 )  # patched
 
     edge1 = EdgeServer('Edge1', covered_edges={
@@ -44,7 +44,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_3_6_n_3_5',
         'n_3_4_n_3_5',
         'n_3_5_n_3_4'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 )  # patched
 
     edge2 = EdgeServer('Edge2', covered_edges={
@@ -68,7 +68,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_5_6_n_5_5',
         'n_5_5_n_5_4',
         'n_5_4_n_5_5'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -91,7 +91,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_1_4_n_1_3',
         'n_1_3_n_1_2',
         'n_1_2_n_1_3'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -112,7 +112,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_3_4_n_3_3',
         'n_3_2_n_3_3',
         'n_3_3_n_3_2'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -135,7 +135,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_5_4_n_5_3',
         'n_5_2_n_5_3',
         'n_5_3_n_5_2'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -160,7 +160,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_1_1_n_1_2',
         'n_1_1_n_1_0',
         'n_1_0_n_1_1'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -183,7 +183,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_3_2_n_3_1',
         'n_3_1_n_3_0',
         'n_3_0_n_3_1'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 
@@ -208,7 +208,7 @@ def init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, globa
         'n_5_2_n_5_1',
         'n_5_1_n_5_0',
         'n_5_0_n_5_1'
-    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock
+    },cached_node_data=cached_node_data, global_data_path=DATA_PATH, active_training_threads=active_training_threads, global_server=global_server, global_clock=global_clock, upload_due_to_position=upload_due_to_position
 
 )  # patched
 

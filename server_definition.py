@@ -13,7 +13,7 @@ from global_server import GlobalServer
 import logging
 
 class EdgeServer(threading.Thread):
-    def __init__(self, server_id, covered_edges,cached_node_data, global_data_path, active_training_threads, global_server, global_clock=None, global_time=120, waiting_time=20, device='cuda'):
+    def __init__(self, server_id, covered_edges,cached_node_data, global_data_path, active_training_threads, global_server,upload_due_to_position, global_clock=None, global_time=120, waiting_time=40, device='cuda'):
         super().__init__(daemon=True)
         self.server_id = server_id
         self.covered_edges = covered_edges
@@ -26,7 +26,8 @@ class EdgeServer(threading.Thread):
         self.global_time = global_time
         self.waiting_time = waiting_time
         self.device = device
-        self.model = SmallResNet(num_classes=10).to(self.device)
+        self.upload_due_to_position = upload_due_to_position
+        self.model = SmallResNet(num_classes=9).to(self.device)
         self.received_models = []
         self.last_selection_time = time.time()
         self.model_version = 1
@@ -40,7 +41,7 @@ class EdgeServer(threading.Thread):
         logger = logging.getLogger(self.server_id)
         logger.setLevel(logging.INFO)
 
-        # 🔥 這邊不需要檢查 handler，直接清除所有 handler（確保每次 clean）
+        #這邊不需要檢查 handler，直接清除所有 handler（確保每次 clean）
         if logger.hasHandlers():
             logger.handlers.clear()
 
@@ -132,7 +133,7 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
 
                 # 隨機選擇最多三輛車來訓練
-                selected_vehicles = random.sample(vehicles_in_area,min(len(vehicles_in_area),3))
+                selected_vehicles = random.sample(vehicles_in_area,len(vehicles_in_area))
                 # print(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")
@@ -162,7 +163,7 @@ class EdgeServer(threading.Thread):
                     self.logger.info(f"{self.server_id} 準備啟動車輛 {vid} 的 trainer 進行訓練")
 
                     try:
-                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, device=self.device)
+                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, upload_due_to_position_counter=self.upload_due_to_position, device=self.device)
                         trainer.start()
 
                         success = trainer.started_event.wait(timeout=1.0)

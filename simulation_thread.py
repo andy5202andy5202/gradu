@@ -11,9 +11,11 @@ class SimulationThread(threading.Thread):
         self.step_limit = step_limit
         self.real_time_step = real_time_step
         self.running = True
+        self.step_event = threading.Event()
 
     def run(self):
         while self.step < self.step_limit and self.running:
+            print(f"[SIM STEP] {self.step}")
             start_time = time.time()
             try:
                 traci.simulationStep()
@@ -22,6 +24,7 @@ class SimulationThread(threading.Thread):
                 break
 
             self.step += 1
+            self.step_event.set() 
             elapsed = time.time() - start_time
             if elapsed < self.real_time_step:
                 time.sleep(self.real_time_step - elapsed)

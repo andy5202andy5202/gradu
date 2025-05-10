@@ -14,15 +14,17 @@ import atexit
 
 
 class GlobalServer(threading.Thread):
-    def __init__(self, global_data_path, total_edge_servers, T=120, device='cuda', global_clock=None):
+    def __init__(self, global_data_path, total_edge_servers, upload_due_to_position, T=120, device='cuda', global_clock=None):
         super().__init__(daemon=True)
         self.T = T
         self.device = device
         self.global_clock = global_clock
         self.logger = self.setup_logger()
-        self.model = SmallResNet(num_classes=10).to(self.device)
+        self.model = SmallResNet(num_classes=9).to(self.device)
         self.received_models = []
         self.model_version = 1
+        self.upload_due_to_position = upload_due_to_position
+        self.position_upload_history = []
         self.global_data = self.load_global_data(global_data_path)
         self.global_dataloader = create_dataloader(self.global_data, batch_size=64)
         self.total_edge_servers = total_edge_servers
@@ -107,21 +109,31 @@ class GlobalServer(threading.Thread):
     
     def save_training_plot(self):
         rounds = range(1, len(self.loss_history) + 1)
-
         fig, ax1 = plt.subplots(figsize=(10, 5))
 
-        # 左側 y 軸：Loss
+        # Loss (左 y 軸)
         ax1.set_xlabel("Global Aggregation Round")
         ax1.set_ylabel("Loss", color='tab:blue')
         ax1.plot(rounds, self.loss_history, label="Loss", marker='o', color='tab:blue', linestyle='-')
         ax1.tick_params(axis='y', labelcolor='tab:blue')
-        ax1.set_xticks(rounds)  # <- 設定 x 軸為整數輪次
 
-        # 右側 y 軸：Accuracy
+        # 讓 x 軸不要每輪都顯示 → 每隔 5 輪顯示一次 tick（或視 round 數量而定）
+        ax1.set_xticks(rounds[::5])  # 若 rounds 很多，這樣較美觀
+        ax1.set_xticklabels([str(r) for r in rounds[::5]])
+
+        # Accuracy (右 y 軸)
         ax2 = ax1.twinx()
         ax2.set_ylabel("Accuracy (%)", color='tab:orange')
         ax2.plot(rounds, self.accuracy_history, label="Accuracy", marker='x', color='tab:orange', linestyle='--')
         ax2.tick_params(axis='y', labelcolor='tab:orange')
+
+        # 額外軸顯示「非 loss 上傳」車輛數（右側第二個 y 軸）
+        if hasattr(self, 'position_upload_history'):
+            ax3 = ax1.twinx()
+            ax3.spines["right"].set_position(("axes", 1.1))  # 把第 2 條 y 軸右移
+            ax3.set_ylabel("#Upload due to position", color='tab:green')
+            ax3.plot(rounds, self.position_upload_history, label="Upload due to position", marker='s', color='tab:green', linestyle=':')
+            ax3.tick_params(axis='y', labelcolor='tab:green')
 
         plt.title("Global Model Training Metrics Over Rounds")
         plt.grid(True)
@@ -129,6 +141,7 @@ class GlobalServer(threading.Thread):
         os.makedirs("logs", exist_ok=True)
         plt.savefig("logs/global_training_metrics.png")
         plt.close()
+
 
 
 
@@ -180,6 +193,9 @@ class GlobalServer(threading.Thread):
 
                 self.model_version += 1
                 self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
+                self.position_upload_history.append(self.upload_due_to_position['count'])
+                self.logger.info(f"第 {self.model_version} 輪：{self.position_upload_history[-1]} 輛車是因為 position 而上傳")
+                self.upload_due_to_position['count'] = 0  # 重置統計器
                 self.loss_history.append(loss)
                 self.accuracy_history.append(accuracy)
                 self.save_training_plot()

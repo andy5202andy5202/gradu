@@ -40,7 +40,7 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
             print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
             if logger:
                 logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-            return model, avg_loss, True
+            return model, avg_loss, 'loss'
 
         # ===== 位置判斷 =====
         try:
@@ -57,21 +57,21 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
                         print(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
                         if logger:
                             logger.info(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
-                        return model, avg_loss, True
+                        return model, avg_loss, 'position'
                         
             else:
                 print(f"車輛 {vehicle_id} 已離開模擬 → 結束訓練")
                 if logger:
                     logger.info(f"車輛 {vehicle_id} 已離開模擬 → 結束訓練")
-                return model, avg_loss, True
+                return model, avg_loss, 'position'
 
         except traci.exceptions.TraCIException:
             print(f"TraCIException: 無法取得車輛 {vehicle_id} 的位置。該車輛已離開模擬環境→ 結束訓練")
             if logger:
                 logger.info(f"TraCIException: 無法取得車輛 {vehicle_id} 的位置。該車輛已離開模擬環境→ 結束訓練")
-            return model, avg_loss, True
+            return model, avg_loss, 'position'
 
-    return model, avg_loss, False  # 沒提前結束，跑滿 epochs
+    return model, avg_loss, 'False'  # 沒提前結束，跑滿 epochs
 
 
 

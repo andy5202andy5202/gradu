@@ -17,12 +17,14 @@ import random
 
 
 
-SUMO_BINARY = 'sumo-gui'
+SUMO_BINARY = 'sumo'
 CONFIG_FILE = 'grid7x7.sumocfg'
 DATA_PATH = os.path.join(os.getcwd(), 'cifar_non_iid')
 
 active_training_threads = {}  # 在這裡初始化 active_training_threads
 cached_node_data = {}
+upload_due_to_position = {'count':0}
+
 
 def preload_node_data():
     group_names = [f'g{i}' for i in range(9)]
@@ -74,11 +76,12 @@ def log(global_clock, message):
         timestamp = "[GlobalClock] ??s"
     
     full_msg = f"{timestamp} - {message}"
-    print(full_msg)
+    print(full_msg,flush=True)
 
     # 寫入 env.log
     with open("env.log", "a") as f:
         f.write(full_msg + "\n")
+        f.flush()
 
 
 
@@ -96,14 +99,14 @@ if __name__ == '__main__':
     global_clock = GlobalClock()
     global_clock.start()  # 啟動全域時鐘
     
-    global_server = GlobalServer(global_data_path=DATA_PATH, total_edge_servers=9, T=120, global_clock = global_clock)
+    global_server = GlobalServer(global_data_path=DATA_PATH, total_edge_servers=9,upload_due_to_position=upload_due_to_position, T=120, global_clock = global_clock)
     # 定義 Edge Servers
-    edge_servers = init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock)
+    edge_servers = init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock, upload_due_to_position)
 
         
     real_time_step = 1.0
         
-    sim_thread = SimulationThread(step_limit=10800, real_time_step=1.0)
+    sim_thread = SimulationThread(step_limit=14400, real_time_step=1.0)
     sim_thread.start()
     
     global_server.start()
@@ -111,7 +114,9 @@ if __name__ == '__main__':
     for server in edge_servers.values():
         server.start()
         
-    while sim_thread.step < 10800:
+    while sim_thread.step < 14400:
+        sim_thread.step_event.wait()     # 等待模擬 step 結束
+        sim_thread.step_event.clear()    # 重置事件（準備下次等待）
         start_time = time.time()
         
         vehicle_ids = traci.vehicle.getIDList()
@@ -166,6 +171,7 @@ if __name__ == '__main__':
             except Exception as e:
                 log(global_clock,f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
                 
+    print(f"共 {upload_due_to_position['count']} 輛車是因為提前結束訓練上傳模型（非 loss 達標）。")          
     sim_thread.join()
     traci.close()
 

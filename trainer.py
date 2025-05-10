@@ -10,12 +10,13 @@ import os
 
 class VehicleTrainer(threading.Thread):
     
-    def __init__(self, vehicle_id, data_for_vehicle, edge_server, device='cuda'):
+    def __init__(self, vehicle_id, data_for_vehicle, edge_server, upload_due_to_position_counter, device='cuda'):
         super().__init__()
         self.vehicle_id = vehicle_id
         self.data_for_vehicle = data_for_vehicle
         self.device = device
         self.edge_server = edge_server
+        self.upload_due_to_position_counter = upload_due_to_position_counter
         self.global_clock = edge_server.global_clock
         self.started_event = threading.Event()
         
@@ -78,7 +79,7 @@ class VehicleTrainer(threading.Thread):
 
     def run(self):
         self.started_event.set()
-        self.model, loss, finished = train_model(
+        self.model, loss, finish_reason = train_model(
             self.model,
             self.data_for_vehicle,
             vehicle_id=self.vehicle_id,
@@ -90,7 +91,10 @@ class VehicleTrainer(threading.Thread):
             logger=self.logger
         )
 
-        if finished:
+        if finish_reason == 'position':
+            self.upload_due_to_position_counter['count'] += 1
+        
+        if finish_reason in ('loss', 'position'):
             self.trained = True
 
         # 訓練完成後回傳模型參數（上傳邏輯放這裡）

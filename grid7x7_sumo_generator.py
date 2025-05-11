@@ -6,7 +6,7 @@ import random
 # Configuration for 7x7 Grid
 # ----------------------------
 GRID_SIZE = 7
-GRID_SPACING = 150  # 每格距離（可調整）
+GRID_SPACING = 110  # 每格距離（可調整）
 NODES_FILE = "grid7x7.nod.xml"
 EDGES_FILE = "grid7x7.edg.xml"
 NET_FILE = "grid7x7.net.xml"

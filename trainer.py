@@ -35,10 +35,12 @@ class VehicleTrainer(threading.Thread):
         
         self.logger.info(f"{self.vehicle_id} state_dict 載入完成")
         
-        self.epoch = 90
-        self.loss_threshold = 0.01
+        self.epoch = 150
+        self.loss_threshold = 0.55
         self.batch_size = 32
-        self.learning_rate = 0.005
+        self.learning_rate = 0.001
+        self.early_stop_patience = 5
+        self.min_delta = 0.005
         self.trained = False
         self.global_version = self.edge_server.global_server.model_version
         print(f"車輛 {self.vehicle_id} 拿到 {self.edge_server.server_id} 的模型版本 {self.model_version}（全局版本 {self.global_version}），開始訓練。")
@@ -88,13 +90,15 @@ class VehicleTrainer(threading.Thread):
             learning_rate=self.learning_rate,
             device=self.device,
             loss_threshold=self.loss_threshold,
-            logger=self.logger
+            logger=self.logger,
+            early_stop_patience=self.early_stop_patience, 
+            min_delta=self.min_delta
         )
 
         if finish_reason == 'position':
             self.upload_due_to_position_counter['count'] += 1
         
-        if finish_reason in ('loss', 'position'):
+        if finish_reason in ('early_stop', 'position'):
             self.trained = True
 
         # 訓練完成後回傳模型參數（上傳邏輯放這裡）

@@ -89,7 +89,7 @@ with open(ROUTES_FILE, 'w') as f:
 
     vehicle_id = 0
     step = 0.0
-    for _ in range(10800):
+    for _ in range(14400):
         (x1, y1) = random.choice(entry_nodes)
         (x2, y2) = random.choice(exit_nodes)
         while (x1, y1) == (x2, y2):
@@ -101,7 +101,7 @@ with open(ROUTES_FILE, 'w') as f:
         edges = manhattan_path(x1, y1, x2, y2)
         route_edges = ' '.join(edges)
 
-        speed = round(random.uniform(5.0, 20.0), 1)  # 每台車的 maxSpeed
+        speed = round(random.uniform(5.0, 15.0), 1)  # 每台車的 maxSpeed
         vtype_id = f"car{vehicle_id}"
 
         f.write(f'    <vType id="{vtype_id}" accel="2.6" decel="4.5" maxSpeed="{speed}" length="5.0"/>\n')
@@ -109,7 +109,7 @@ with open(ROUTES_FILE, 'w') as f:
         f.write(f'    <vehicle id="veh{vehicle_id}" type="{vtype_id}" route="{route_id}" depart="{step}"/>\n')
 
         vehicle_id += 1
-        step += random.uniform(1, 3)
+        step += random.uniform(0, 4)
 
     f.write('</routes>\n')
 

@@ -56,4 +56,4 @@ for group_name, label_list in groups.items():
 
     print(f"{group_name}: 訓練集 {len(y_train)} 筆，測試集 {len(y_test)} 筆（Label={label_list[0]}）")
 
-print("✅ 拆分完成，已儲存到：", OUTPUT_PATH)
+print("拆分完成，已儲存到：", OUTPUT_PATH)

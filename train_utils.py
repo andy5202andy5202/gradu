@@ -8,16 +8,22 @@ import numpy as np
 import copy
 import traci
 
-def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001, device='cuda', loss_threshold=0.001, logger=None):
+def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001,
+    device='cuda', loss_threshold=0.001, logger=None, early_stop_patience=5, min_delta=0.002):
     model.train()
 
-    images = torch.tensor(train_data['data']).reshape(-1, 3, 32, 32).float() / 255.0
+    images = torch.tensor(train_data['data']).reshape(-1, 3, 32, 32).float()
+    images = (images / 255.0 - 0.5) / 0.5
     labels = torch.tensor(train_data['labels']).long()
     dataset = TensorDataset(images, labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     criterion = nn.CrossEntropyLoss()
+    # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    best_loss = float('inf')
+    no_improve_epochs = 0
 
     for epoch in range(epochs):
         running_loss = 0.0
@@ -34,13 +40,29 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
         # print(f"車輛 {vehicle_id} - Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}")
         if logger:
             logger.info(f"[{vehicle_id}] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
-
+        
         # ===== Loss 判斷 =====
-        if avg_loss < loss_threshold:
-            print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+        # if avg_loss < loss_threshold:
+        #     print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+        #     if logger:
+        #         logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+        #     return model, avg_loss, 'loss'
+        
+        # ===== Early Stopping 判斷 =====
+        dynamic_delta = 0.01 * best_loss if best_loss != float('inf') else 0.005
+
+        # if best_loss - avg_loss >= min_delta:
+        if best_loss - avg_loss >= dynamic_delta:
+            best_loss = avg_loss
+            no_improve_epochs = 0
+        else:
+            no_improve_epochs += 1
+        
+        if no_improve_epochs >= early_stop_patience:
+            print(f"車輛 {vehicle_id} 連續 {early_stop_patience} 次 Loss 無明顯改善（Δ < {dynamic_delta}），提前 Early Stop")
             if logger:
-                logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-            return model, avg_loss, 'loss'
+                logger.info(f"車輛 {vehicle_id} 連續 {early_stop_patience} 次 Loss 無明顯改善（Δ < {dynamic_delta}），提前 Early Stop")
+            return model, avg_loss, 'early_stop'
 
         # ===== 位置判斷 =====
         try:
@@ -160,7 +182,8 @@ def create_dataloader(global_data, batch_size=32):
         raise ValueError("Global data is empty. 確認載入的資料檔案正確。")
 
     # 將資料轉換為 Tensor
-    images = torch.tensor(images).reshape(-1, 3, 32, 32).float() / 255.0
+    images = torch.tensor(images).reshape(-1, 3, 32, 32).float()
+    images = (images / 255.0 - 0.5) / 0.5
     labels = torch.tensor(labels).long()
     
     dataset = TensorDataset(images, labels)

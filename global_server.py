@@ -187,6 +187,7 @@ class GlobalServer(threading.Thread):
                     self.model, 
                     self.global_dataloader, 
                     criterion=torch.nn.CrossEntropyLoss(), 
+                    # criterion=torch.nn.CrossEntropyLoss(label_smoothing=0.1),
                     device=self.device
                 )
                 self.logger.info(f'Global Server 聚合後模型 - Loss: {loss:.4f}, Accuracy: {accuracy:.2f}%')

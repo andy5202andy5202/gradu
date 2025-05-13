@@ -106,7 +106,7 @@ if __name__ == '__main__':
         
     real_time_step = 1.0
         
-    sim_thread = SimulationThread(step_limit=10800, real_time_step=1.0)
+    sim_thread = SimulationThread(step_limit=14400, real_time_step=1.0)
     sim_thread.start()
     
     global_server.start()
@@ -114,7 +114,7 @@ if __name__ == '__main__':
     for server in edge_servers.values():
         server.start()
         
-    while sim_thread.step < 10800:
+    while sim_thread.step < 14400:
         sim_thread.step_event.wait()     # 等待模擬 step 結束
         sim_thread.step_event.clear()    # 重置事件（準備下次等待）
         start_time = time.time()

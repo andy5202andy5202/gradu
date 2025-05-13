@@ -54,4 +54,4 @@ for new_group, old_groups in group_mapping.items():
 
         output_file_index += 1  # 每份檔案編號 +1
 
-print("✅ 重新分組與切分完成，儲存到：", OUTPUT_PATH)
+print("重新分組與切分完成，儲存到：", OUTPUT_PATH)

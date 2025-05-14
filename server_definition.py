@@ -27,7 +27,7 @@ class EdgeServer(threading.Thread):
         self.waiting_time = waiting_time
         self.device = device
         self.upload_due_to_position = upload_due_to_position
-        self.model = SmallResNet(num_classes=9).to(self.device)
+        self.model = SmallResNet(num_classes=10).to(self.device)
         self.received_models = []
         self.last_selection_time = time.time()
         self.model_version = 1
@@ -133,7 +133,9 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
 
                 # 隨機選擇最多三輛車來訓練
-                selected_vehicles = random.sample(vehicles_in_area,len(vehicles_in_area))
+                num_to_select = random.randint(0, len(vehicles_in_area))
+                # selected_vehicles = random.sample(vehicles_in_area,len(vehicles_in_area))
+                selected_vehicles = random.sample(vehicles_in_area,num_to_select)
                 # print(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")
@@ -185,7 +187,11 @@ class EdgeServer(threading.Thread):
                 if self.received_models:
                     self.logger.info(f"{self.server_id} 正在聚合收到的車輛模型...")
                     aggregated_state_dict = aggregate_models(self.received_models, self)
-                    self.model.load_state_dict(aggregated_state_dict)
+                    filtered_state_dict = {
+                        k: v for k, v in aggregated_state_dict.items()
+                        if k in self.model.state_dict()
+                    }
+                    self.model.load_state_dict(filtered_state_dict)
                     self.received_models = []  # 清空
                     self.model_version += 1
                     self.logger.info(f"{self.server_id} 完成聚合，本地模型版本更新為 {self.model_version}")

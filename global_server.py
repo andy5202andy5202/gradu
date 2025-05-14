@@ -10,6 +10,10 @@ import matplotlib
 matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
 import atexit
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import numpy as np
 
 
 
@@ -20,7 +24,7 @@ class GlobalServer(threading.Thread):
         self.device = device
         self.global_clock = global_clock
         self.logger = self.setup_logger()
-        self.model = SmallResNet(num_classes=9).to(self.device)
+        self.model = SmallResNet(num_classes=10).to(self.device)
         self.received_models = []
         self.model_version = 1
         self.upload_due_to_position = upload_due_to_position
@@ -29,6 +33,7 @@ class GlobalServer(threading.Thread):
         self.global_dataloader = create_dataloader(self.global_data, batch_size=64)
         self.total_edge_servers = total_edge_servers
         self.loss_history = []
+        self.per_class_accuracy_log = []
         self.accuracy_history = []
         self.aggregating = False
         self.aggregate_lock = threading.Lock()
@@ -84,7 +89,7 @@ class GlobalServer(threading.Thread):
     
     def load_global_data(self, global_data_path):
         all_data = {'data': [], 'labels': []}
-        for group_id in range(9):
+        for group_id in range(4):
             file_path = os.path.join(global_data_path, f'g{group_id}_test.pkl')
             if os.path.exists(file_path):
                 with open(file_path, 'rb') as f:
@@ -109,30 +114,46 @@ class GlobalServer(threading.Thread):
     
     def save_training_plot(self):
         rounds = range(1, len(self.loss_history) + 1)
+                # 根據總輪數動態決定 tick 間距
+        num_rounds = len(rounds)
+        if num_rounds <= 20:
+            tick_step = 1
+        elif num_rounds <= 50:
+            tick_step = 2
+        elif num_rounds <= 100:
+            tick_step = 5
+        elif num_rounds <= 200:
+            tick_step = 10
+        else:
+            tick_step = 20
+            
         fig, ax1 = plt.subplots(figsize=(10, 5))
-
+        
         # Loss (左 y 軸)
         ax1.set_xlabel("Global Aggregation Round")
         ax1.set_ylabel("Loss", color='tab:blue')
-        ax1.plot(rounds, self.loss_history, label="Loss", marker='o', color='tab:blue', linestyle='-')
+        ax1.plot(rounds, self.loss_history, label="Loss", marker='.', color='tab:blue', linestyle='--')
         ax1.tick_params(axis='y', labelcolor='tab:blue')
 
         # 讓 x 軸不要每輪都顯示 → 每隔 5 輪顯示一次 tick（或視 round 數量而定）
-        ax1.set_xticks(rounds[::5])  # 若 rounds 很多，這樣較美觀
-        ax1.set_xticklabels([str(r) for r in rounds[::5]])
+        # ax1.set_xticks(rounds[::5])  # 若 rounds 很多，這樣較美觀
+        # ax1.set_xticklabels([str(r) for r in rounds[::5]])
+    
+        ax1.set_xticks(rounds[::tick_step])
+        ax1.set_xticklabels([str(r) for r in rounds[::tick_step]])
 
         # Accuracy (右 y 軸)
         ax2 = ax1.twinx()
-        ax2.set_ylabel("Accuracy (%)", color='tab:orange')
-        ax2.plot(rounds, self.accuracy_history, label="Accuracy", marker='x', color='tab:orange', linestyle='--')
-        ax2.tick_params(axis='y', labelcolor='tab:orange')
+        ax2.set_ylabel("Accuracy (%)", color='tab:red')
+        ax2.plot(rounds, self.accuracy_history, label="Accuracy", marker='.', color='tab:red', linestyle='-')
+        ax2.tick_params(axis='y', labelcolor='tab:red')
 
         # 額外軸顯示「非 loss 上傳」車輛數（右側第二個 y 軸）
         if hasattr(self, 'position_upload_history'):
             ax3 = ax1.twinx()
             ax3.spines["right"].set_position(("axes", 1.1))  # 把第 2 條 y 軸右移
             ax3.set_ylabel("#Upload due to position", color='tab:green')
-            ax3.plot(rounds, self.position_upload_history, label="Upload due to position", marker='s', color='tab:green', linestyle=':')
+            ax3.plot(rounds, self.position_upload_history, label="Upload due to position", marker='.', color='tab:green', linestyle=':')
             ax3.tick_params(axis='y', labelcolor='tab:green')
 
         plt.title("Global Model Training Metrics Over Rounds")
@@ -141,11 +162,64 @@ class GlobalServer(threading.Thread):
         os.makedirs("logs", exist_ok=True)
         plt.savefig("logs/global_training_metrics.png")
         plt.close()
+        
+    def save_per_class_accuracy_heatmap(self):
+        if not self.per_class_accuracy_log:
+            self.logger.warning("無 per_class_accuracy_log 資料，跳過 heatmap 繪圖")
+            return
 
+        os.makedirs("logs", exist_ok=True)
 
+        try:
+            # 強制所有類別都存在（補 0）
+            full_log = []
+            for acc_dict in self.per_class_accuracy_log:
+                row = {i: acc_dict.get(i, 0.0) for i in range(10)}  # 確保 0~9 類都存在
+                full_log.append(row)
 
+            df = pd.DataFrame(full_log)
+            df.index.name = "Global Round"
+            df.columns = [f"Label {i}" for i in df.columns]
 
+            self.logger.info(f"繪圖資料維度: {df.shape}")
+            self.logger.info(f"欄位: {df.columns.tolist()}")
 
+            plt.figure(figsize=(12, 6))
+            sns.heatmap(
+                df.T,
+                annot=True,
+                fmt=".1f",
+                cmap="YlGnBu",
+                vmin=0,
+                vmax=100,
+                cbar_kws={'label': 'Accuracy (%)'}
+            )
+            num_rounds = len(df)
+            if num_rounds <= 20:
+                tick_step = 1
+            elif num_rounds <= 50:
+                tick_step = 2
+            elif num_rounds <= 100:
+                tick_step = 5
+            elif num_rounds <= 200:
+                tick_step = 10
+            else:
+                tick_step = 20
+
+            ax = plt.gca()
+            ax.set_xticks(np.arange(0, num_rounds, step=tick_step))
+            ax.set_xticklabels([str(i + 1) for i in range(0, num_rounds, tick_step)])
+            plt.title("Per-Class Accuracy Across Global Rounds")
+            plt.xlabel("Global Round")
+            plt.ylabel("Class Label")
+            plt.tight_layout()
+            out_path = "logs/per_class_accuracy_heatmap.png"
+            plt.savefig(out_path)
+            plt.close()
+            self.logger.info(f"Heatmap 成功儲存至 {out_path}")
+
+        except Exception as e:
+            self.logger.error(f"Heatmap 繪圖失敗：{str(e)}")
 
     def run(self):
         try:
@@ -165,7 +239,7 @@ class GlobalServer(threading.Thread):
                     self.logger.info(f"Global Server 等待中... 已收到 {len(self.received_models)}/{self.total_edge_servers} 個模型")
                     time.sleep(0.1)
 
-                self.logger.info("Global Server 已收到所有 Edge Server 的參數，開始聚合模型...")
+                # self.logger.info("Global Server 已收到所有 Edge Server 的參數，開始聚合模型...")
                 
                 self.logger.info("Global Server 已收到所有 Edge Server 的參數，開始聚合模型...")
 
@@ -183,7 +257,7 @@ class GlobalServer(threading.Thread):
                 self.check_model_parameters()
 
                 # 計算 Loss 和 Accuracy
-                loss, accuracy = calculate_loss_and_accuracy(
+                loss, accuracy, per_class_accuracy = calculate_loss_and_accuracy(
                     self.model, 
                     self.global_dataloader, 
                     criterion=torch.nn.CrossEntropyLoss(), 
@@ -191,7 +265,15 @@ class GlobalServer(threading.Thread):
                     device=self.device
                 )
                 self.logger.info(f'Global Server 聚合後模型 - Loss: {loss:.4f}, Accuracy: {accuracy:.2f}%')
+                
+                for i in range(10):  # 假設是 10 類
+                    acc = per_class_accuracy.get(i, 0.0)
+                    self.logger.info(f"→ 類別 {i}: Accuracy = {acc:.2f}%")
 
+                    
+                self.per_class_accuracy_log.append(per_class_accuracy)
+                self.save_per_class_accuracy_heatmap()
+                
                 self.model_version += 1
                 self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
                 self.position_upload_history.append(self.upload_due_to_position['count'])

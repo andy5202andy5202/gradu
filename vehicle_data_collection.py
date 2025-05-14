@@ -19,15 +19,22 @@ import random
 
 SUMO_BINARY = 'sumo'
 CONFIG_FILE = 'grid7x7.sumocfg'
-DATA_PATH = os.path.join(os.getcwd(), 'cifar_non_iid')
+DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
 
 active_training_threads = {}  # 在這裡初始化 active_training_threads
 cached_node_data = {}
 upload_due_to_position = {'count':0}
 
+entry_to_group = {
+    'n_0_1': 'g0', 'n_0_2': 'g0', 'n_0_3': 'g0', 'n_0_4': 'g0', 'n_0_5': 'g0',
+    'n_1_6': 'g1', 'n_2_6': 'g1', 'n_3_6': 'g1', 'n_4_6': 'g1', 'n_5_6': 'g1',
+    'n_6_1': 'g2', 'n_6_2': 'g2', 'n_6_3': 'g2', 'n_6_4': 'g2', 'n_6_5': 'g2',
+    'n_1_0': 'g3', 'n_2_0': 'g3', 'n_3_0': 'g3', 'n_4_0': 'g3', 'n_5_0': 'g3',
+}
+
 
 def preload_node_data():
-    group_names = [f'g{i}' for i in range(9)]
+    group_names = [f'g{i}' for i in range(4)]
     for group_name in group_names:
         file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
         if os.path.exists(file_path):
@@ -106,7 +113,7 @@ if __name__ == '__main__':
         
     real_time_step = 1.0
         
-    sim_thread = SimulationThread(step_limit=14400, real_time_step=1.0)
+    sim_thread = SimulationThread(step_limit=18000, real_time_step=1.0)
     sim_thread.start()
     
     global_server.start()
@@ -114,7 +121,7 @@ if __name__ == '__main__':
     for server in edge_servers.values():
         server.start()
         
-    while sim_thread.step < 14400:
+    while sim_thread.step < 18000:
         sim_thread.step_event.wait()     # 等待模擬 step 結束
         sim_thread.step_event.clear()    # 重置事件（準備下次等待）
         start_time = time.time()
@@ -132,11 +139,16 @@ if __name__ == '__main__':
                         continue  # 確保有 route 再繼續
                     start_node = get_entry_node_from_edge(route[0])
                     # data_for_vehicle = get_data_for_vehicle(start_node)
+                    
+                    group = entry_to_group.get(start_node, None)
+                    if group is None:
+                        log(global_clock, f"[警告] 未知 entry node {start_node}，預設為 g0")
+                        group = 'g0'
 
                     active_training_threads[vid] = {
                         "entry_node": start_node,
                         "trainer": None,
-                        "data_group": random.choice([f"g{i}" for i in range(9)])
+                        "data_group": group
                     }
                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
                     assigned = active_training_threads[vid]['data_group']

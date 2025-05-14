@@ -1,5 +1,4 @@
 # train_utils.py
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -7,6 +6,7 @@ from torch.utils.data import DataLoader, TensorDataset
 import numpy as np
 import copy
 import traci
+from collections import defaultdict
 
 def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001,
     device='cuda', loss_threshold=0.001, logger=None, early_stop_patience=5, min_delta=0.002):
@@ -16,12 +16,19 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
     images = (images / 255.0 - 0.5) / 0.5
     labels = torch.tensor(train_data['labels']).long()
     dataset = TensorDataset(images, labels)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
+    # drop_last_flag = len(dataset) >= batch_size
+    # dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=drop_last_flag)
 
+
+    # criterion = nn.CrossEntropyLoss()
+    # optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    
+    #sGD + StepLR
     criterion = nn.CrossEntropyLoss()
-    # criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=0.9, weight_decay=5e-4)
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.7)
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
     best_loss = float('inf')
     no_improve_epochs = 0
 
@@ -37,16 +44,20 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
             running_loss += loss.item()
 
         avg_loss = running_loss / len(dataloader)
+        
+        #SGD + StepLR
+        scheduler.step()
+
         # print(f"車輛 {vehicle_id} - Epoch [{epoch+1}/{epochs}], Loss: {avg_loss:.4f}")
         if logger:
             logger.info(f"[{vehicle_id}] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
         
         # ===== Loss 判斷 =====
-        # if avg_loss < loss_threshold:
-        #     print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-        #     if logger:
-        #         logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-        #     return model, avg_loss, 'loss'
+        if avg_loss < loss_threshold:
+            print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+            if logger:
+                logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+            return model, avg_loss, 'loss'
         
         # ===== Early Stopping 判斷 =====
         dynamic_delta = 0.01 * best_loss if best_loss != float('inf') else 0.005
@@ -141,14 +152,32 @@ def aggregate_models(models, self):
             self.model_version -= 1
             return self.model.state_dict()
 
-        raw_weights = [1 / (1 + delta * s) for s in staleness_list]
+        # raw_weights = [1 / (1 + delta * s) for s in staleness_list]
+        # weight_sum = sum(raw_weights)
+        # weights = [w / weight_sum for w in raw_weights]
+        
+        # 提取每個車輛對應的 label 數量（存在模型資訊裡）
+        label_counts = []
+        for model_dict, version in filtered_models:
+            label_count = model_dict.get("label_count", 1)  # 預設 1，防止缺漏
+            label_counts.append(label_count)
+            
+        C_max = max(label_counts)
+        
+        # 結合 label 數 + staleness
+        raw_weights = [
+            (c / C_max) * (1 / (1 + delta * s))
+            for c, s in zip(label_counts, staleness_list)
+        ]
+        
         weight_sum = sum(raw_weights)
         weights = [w / weight_sum for w in raw_weights]
 
         self.logger.info(
-            f"{self.server_id} 使用 staleness-aware 聚合:\n"
+            f"{self.server_id} 使用 label-aware + staleness 聚合:\n"
             f"→ 使用的模型版本 = {[m[1] for m in filtered_models]}\n"
             f"→ Staleness = {staleness_list}\n"
+            f"→ Label Count = {label_counts}\n"
             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
         )
 
@@ -159,12 +188,13 @@ def aggregate_models(models, self):
     # ---------------------
     aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
     for key in aggregated_state_dict:
-        if torch.is_floating_point(aggregated_state_dict[key]):
+        if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
             aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
             for i, state_dict in enumerate(model_state_dicts):
                 aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
         else:
-            aggregated_state_dict[key] = model_state_dicts[0][key].to(aggregated_state_dict[key].device)
+            # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
+            aggregated_state_dict[key] = model_state_dicts[0][key]
 
     return aggregated_state_dict
 
@@ -187,7 +217,7 @@ def create_dataloader(global_data, batch_size=32):
     labels = torch.tensor(labels).long()
     
     dataset = TensorDataset(images, labels)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, drop_last=True)
     
     return dataloader
 
@@ -197,6 +227,9 @@ def calculate_loss_and_accuracy(model, dataloader, criterion, device='cuda'):
     total_loss = 0.0
     correct = 0
     total = 0
+    
+    class_correct = defaultdict(int)
+    class_total = defaultdict(int)
 
     with torch.no_grad():
         for inputs, labels in dataloader:
@@ -208,9 +241,20 @@ def calculate_loss_and_accuracy(model, dataloader, criterion, device='cuda'):
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+            
+            for i in range(len(labels)):
+                label = labels[i].item()
+                class_total[label] += 1
+                if predicted[i].item() == label:
+                    class_correct[label] += 1
     
     average_loss = total_loss / len(dataloader)
     accuracy = 100 * correct / total
+    
+    per_class_accuracy = {
+        label: 100 * class_correct[label] / class_total[label]
+        for label in sorted(class_total.keys())
+    }
 
     model.train()  # 切回訓練模式
-    return average_loss, accuracy
+    return average_loss, accuracy, per_class_accuracy

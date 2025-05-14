@@ -6,7 +6,7 @@ import random
 # Configuration for 7x7 Grid
 # ----------------------------
 GRID_SIZE = 7
-GRID_SPACING = 125  # 每格距離（可調整）
+GRID_SPACING = 200  # 每格距離（可調整）
 NODES_FILE = "grid7x7.nod.xml"
 EDGES_FILE = "grid7x7.edg.xml"
 NET_FILE = "grid7x7.net.xml"
@@ -89,7 +89,7 @@ with open(ROUTES_FILE, 'w') as f:
 
     vehicle_id = 0
     step = 0.0
-    for _ in range(14400):
+    for _ in range(18000):
         (x1, y1) = random.choice(entry_nodes)
         (x2, y2) = random.choice(exit_nodes)
         while (x1, y1) == (x2, y2):

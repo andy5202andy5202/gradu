@@ -13,7 +13,7 @@ from global_server import GlobalServer
 import logging
 
 class EdgeServer(threading.Thread):
-    def __init__(self, server_id, covered_edges,cached_node_data, global_data_path, active_training_threads, global_server,upload_due_to_position, global_clock=None, global_time=120, waiting_time=40, device='cuda'):
+    def __init__(self, server_id, covered_edges,cached_node_data, global_data_path, active_training_threads, global_server,upload_due_to_position, global_clock=None, global_time=120, waiting_time=30, device='cuda'):
         super().__init__(daemon=True)
         self.server_id = server_id
         self.covered_edges = covered_edges

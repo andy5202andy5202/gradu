@@ -101,7 +101,7 @@ with open(ROUTES_FILE, 'w') as f:
         edges = manhattan_path(x1, y1, x2, y2)
         route_edges = ' '.join(edges)
 
-        speed = round(random.uniform(5.0, 15.0), 1)  # 每台車的 maxSpeed
+        speed = round(random.uniform(15.0, 15.0), 1)  # 每台車的 maxSpeed
         vtype_id = f"car{vehicle_id}"
 
         f.write(f'    <vType id="{vtype_id}" accel="2.6" decel="4.5" maxSpeed="{speed}" length="5.0"/>\n')

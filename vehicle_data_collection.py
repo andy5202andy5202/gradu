@@ -144,11 +144,13 @@ if __name__ == '__main__':
                     if group is None:
                         log(global_clock, f"[警告] 未知 entry node {start_node}，預設為 g0")
                         group = 'g0'
+                    max_speed = traci.vehicle.getMaxSpeed(vid)
 
                     active_training_threads[vid] = {
                         "entry_node": start_node,
                         "trainer": None,
-                        "data_group": group
+                        "data_group": group,
+                        "max_speed": max_speed 
                     }
                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
                     assigned = active_training_threads[vid]['data_group']

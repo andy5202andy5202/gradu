@@ -53,11 +53,11 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
             logger.info(f"[{vehicle_id}] Epoch {epoch+1}/{epochs} Loss: {avg_loss:.4f}")
         
         # ===== Loss 判斷 =====
-        if avg_loss < loss_threshold:
-            print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-            if logger:
-                logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
-            return model, avg_loss, 'loss'
+        # if avg_loss < loss_threshold:
+        #     print(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+        #     if logger:
+        #         logger.info(f"車輛 {vehicle_id} 達到 Loss 門檻 {loss_threshold}，提前結束訓練。")
+        #     return model, avg_loss, 'loss'
         
         # ===== Early Stopping 判斷 =====
         dynamic_delta = 0.01 * best_loss if best_loss != float('inf') else 0.005
@@ -123,12 +123,35 @@ def aggregate_models(models, self):
         Ke_list = [m[1] for m in models]  # Edge Server 上傳的 model_version 當作 Ke
         weight_sum = sum(Ke_list)
         weights = [k / weight_sum for k in Ke_list]
-
+        alpha = 0.1
+        old_state_dict = self.model.state_dict()
         self.logger.info(
             f"GlobalServer 使用 Ke 加權聚合：\n"
             f"→ 收到版本號 (Ke) = {Ke_list}\n"
             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
         )
+        # ---------------------
+        # 聚合模型
+        # ---------------------
+        aggregated_state_dict = {}
+        for key in old_state_dict:
+            if isinstance(old_state_dict[key], torch.Tensor) and torch.is_floating_point(old_state_dict[key]):
+                # 初始化為 0 張量
+                agg = torch.zeros_like(old_state_dict[key])
+                for i, state_dict in enumerate(model_state_dicts):
+                    agg += weights[i] * state_dict[key].to(agg.device)
+                # Momentum 融合
+                aggregated_state_dict[key] = (1 - alpha) * old_state_dict[key] + alpha * agg
+            else:
+                aggregated_state_dict[key] = old_state_dict[key]
+
+        self.logger.info(
+            f"GlobalServer 使用 Ke 加權聚合 + α={alpha} 平滑：\n"
+            f"→ Ke = {Ke_list}\n"
+            f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
+        )
+
+        return aggregated_state_dict
 
     # ---------------------------------------------------
     # Edge Server 聚合：使用 staleness-aware 加權
@@ -182,21 +205,32 @@ def aggregate_models(models, self):
         )
 
         model_state_dicts = [m[0] for m in filtered_models]
+        aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
+        for key in aggregated_state_dict:
+            if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
+                aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
+                for i, state_dict in enumerate(model_state_dicts):
+                    aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
+            else:
+                # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
+                aggregated_state_dict[key] = model_state_dicts[0][key]
 
-    # ---------------------
-    # 聚合模型
-    # ---------------------
-    aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
-    for key in aggregated_state_dict:
-        if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
-            aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
-            for i, state_dict in enumerate(model_state_dicts):
-                aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
-        else:
-            # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
-            aggregated_state_dict[key] = model_state_dicts[0][key]
+        return aggregated_state_dict
 
-    return aggregated_state_dict
+    # # ---------------------
+    # # 聚合模型
+    # # ---------------------
+    # aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
+    # for key in aggregated_state_dict:
+    #     if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
+    #         aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
+    #         for i, state_dict in enumerate(model_state_dicts):
+    #             aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
+    #     else:
+    #         # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
+    #         aggregated_state_dict[key] = model_state_dicts[0][key]
+
+    # return aggregated_state_dict
 
 
 

@@ -7,3 +7,5 @@ logs/
 test.py 
 *.yml
 veh/
+*.png
+

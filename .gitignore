@@ -8,4 +8,5 @@ test.py
 *.yml
 veh/
 *.png
+cifar_noniid_blurred/
 

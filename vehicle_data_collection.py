@@ -22,7 +22,8 @@ CONFIG_FILE = 'grid7x7.sumocfg'
 DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
 
 active_training_threads = {}  # 在這裡初始化 active_training_threads
-cached_node_data = {}
+# cached_node_data = {}
+cached_blurred_data = {}  # cached_blurred_data[group][speed] = data_dict
 upload_due_to_position = {'count':0}
 upload_due_to_early_stop = {'count': 0}
 upload_due_to_global_timeout = {'count': 0}
@@ -37,17 +38,41 @@ entry_to_group = {
 }
 
 
-def preload_node_data():
-    group_names = [f'g{i}' for i in range(4)]
-    for group_name in group_names:
-        file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, 'rb') as f:
-                    cached_node_data[group_name] = pickle.load(f)
-                    print(f"預載成功：{group_name}_train.pkl")
-            except Exception as e:
-                print(f"[錯誤] 載入 {group_name}_train.pkl 時失敗：{e}")
+# def preload_node_data():
+#     group_names = [f'g{i}' for i in range(4)]
+#     for group_name in group_names:
+#         file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
+#         if os.path.exists(file_path):
+#             try:
+#                 with open(file_path, 'rb') as f:
+#                     cached_node_data[group_name] = pickle.load(f)
+#                     print(f"預載成功：{group_name}_train.pkl")
+#             except Exception as e:
+#                 print(f"[錯誤] 載入 {group_name}_train.pkl 時失敗：{e}")
+
+def preload_blurred_data():
+    groups = ['g0', 'g1', 'g2', 'g3']
+    for group in groups:
+        cached_blurred_data[group] = {}
+        for speed in range(1, 21):
+            path = os.path.join("cifar_noniid_blurred", group, f"speed{speed:02d}_train.pkl")
+            if os.path.exists(path):
+                try:
+                    with open(path, "rb") as f:
+                        cached_blurred_data[group][speed] = pickle.load(f)
+                        print(f"載入：{group} speed={speed}")
+                except Exception as e:
+                    print(f"[錯誤] 無法載入 {path}：{e}")
+
+
+def load_vehicle_data(group_name, max_speed):
+    speed_int = int(round(max(1, min(20, max_speed))))
+    try:
+        return cached_blurred_data[group_name][speed_int]
+    except KeyError:
+        raise FileNotFoundError(f"[cache miss] {group_name} @ speed={speed_int} 尚未載入")
+
+
 
 # def get_data_for_vehicle(road_id):
 #     # 解析成真正的入口節點名稱
@@ -106,7 +131,8 @@ if __name__ == '__main__':
     pre_step = 0
     step = 0
     real_time_step = 1.0
-    preload_node_data()
+    # preload_node_data()
+    preload_blurred_data()
     global_clock = GlobalClock()
     global_clock.start()  # 啟動全域時鐘
     
@@ -173,6 +199,12 @@ if __name__ == '__main__':
                     # except Exception as e:
                     #     remaining_steps = -1  # 若無法取得，設為 -1
                     #     log(global_clock, f"[錯誤] 無法取得 {vid} 剩餘邊數：{e}")
+                    
+                    try:
+                        data_for_vehicle = load_vehicle_data(group, max_speed)
+                    except Exception as e:
+                        log(global_clock, f"[錯誤] 無法載入 {group} 的模糊版資料（速度 {max_speed:.1f}）→ {e}")
+                        continue
 
                     active_training_threads[vid] = {
                         "entry_node": start_node,
@@ -180,7 +212,8 @@ if __name__ == '__main__':
                         "data_group": group,
                         "max_speed": max_speed,
                         "compute_power": compute_power,
-                        "route_length": route_length
+                        "route_length": route_length,
+                        "data": data_for_vehicle
                         # "train_count": 0 
                     }
                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25

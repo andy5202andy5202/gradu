@@ -279,42 +279,42 @@ class VehicleTrainer(threading.Thread):
     def run(self):
         self.started_event.set()
         
-        # 模糊處理
-        try:
-            max_speed = self.edge_server.active_training_threads[self.vehicle_id]['max_speed']
-            original = self.data_for_vehicle['data']
+        # # 模糊處理
+        # try:
+        #     max_speed = self.edge_server.active_training_threads[self.vehicle_id]['max_speed']
+        #     original = self.data_for_vehicle['data']
 
-            # 必要的轉換
-            if original.ndim == 1 and original.shape[0] == 3072:
-                original = original.reshape(1, 3, 32, 32)
-            elif original.ndim == 2 and original.shape[1] == 3072:
-                original = original.reshape(-1, 3, 32, 32)
+        #     # 必要的轉換
+        #     if original.ndim == 1 and original.shape[0] == 3072:
+        #         original = original.reshape(1, 3, 32, 32)
+        #     elif original.ndim == 2 and original.shape[1] == 3072:
+        #         original = original.reshape(-1, 3, 32, 32)
 
-            # 如果已經是標準化後的 [-1,1]，就不要再做
-            if original.max() > 2.0 or original.min() < -2.0:
-                original = (original / 255.0 - 0.5) / 0.5
-                self.logger.info(f"{self.vehicle_id} 對資料進行標準化")
-            else:
-                self.logger.info(f"{self.vehicle_id} 偵測資料已標準化，跳過")
+        #     # 如果已經是標準化後的 [-1,1]，就不要再做
+        #     if original.max() > 2.0 or original.min() < -2.0:
+        #         original = (original / 255.0 - 0.5) / 0.5
+        #         self.logger.info(f"{self.vehicle_id} 對資料進行標準化")
+        #     else:
+        #         self.logger.info(f"{self.vehicle_id} 偵測資料已標準化，跳過")
 
             
             
-            blurred = apply_motion_blur(original, max_speed, vehicle_id=self.vehicle_id, logger=self.logger)
+        #     blurred = apply_motion_blur(original, max_speed, vehicle_id=self.vehicle_id, logger=self.logger)
 
-            # 只在模糊成功後儲存圖片
-            try:
-                vid_num = int(self.vehicle_id.replace("veh", ""))
-                if vid_num < 50:
-                    save_image_pair(original[0], blurred[0], self.vehicle_id, max_speed)
-            except Exception as e:
-                self.logger.warning(f"{self.vehicle_id} 儲存模糊圖像時出錯：{e}")
+        #     # 只在模糊成功後儲存圖片
+        #     try:
+        #         vid_num = int(self.vehicle_id.replace("veh", ""))
+        #         if vid_num < 50:
+        #             save_image_pair(original[0], blurred[0], self.vehicle_id, max_speed)
+        #     except Exception as e:
+        #         self.logger.warning(f"{self.vehicle_id} 儲存模糊圖像時出錯：{e}")
             
-            blurred = blurred.reshape(len(blurred), -1)
-            self.data_for_vehicle['data'] = blurred
-            self.logger.info(f"{self.vehicle_id} 模糊處理完成（maxSpeed = {max_speed:.1f}")
+        #     blurred = blurred.reshape(len(blurred), -1)
+        #     self.data_for_vehicle['data'] = blurred
+        #     self.logger.info(f"{self.vehicle_id} 模糊處理完成（maxSpeed = {max_speed:.1f}")
 
-        except Exception as e:
-            self.logger.warning(f"{self.vehicle_id} 模糊處理失敗：{e}")
+        # except Exception as e:
+        #     self.logger.warning(f"{self.vehicle_id} 模糊處理失敗：{e}")
 
         # self.model, loss, finish_reason = train_model(
         #     self.model,
@@ -356,7 +356,6 @@ class VehicleTrainer(threading.Thread):
             f"{self.vehicle_id} 訓練完成：總耗時={elapsed:.2f}s, epoch={epoch_trained}, 每 epoch={avg_epoch_time:.3f}s"
         )
         
-       
         # with open("logs/train_stats.csv", "a") as f:
         #     f.write(f"{self.vehicle_id},{self.compute_power},{self.batch_size},{epoch_trained},{elapsed:.4f},{avg_epoch_time:.4f},{self.simulated_delay:.3f}\n")
 

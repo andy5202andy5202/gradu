@@ -24,6 +24,10 @@ DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
 active_training_threads = {}  # 在這裡初始化 active_training_threads
 cached_node_data = {}
 upload_due_to_position = {'count':0}
+upload_due_to_early_stop = {'count': 0}
+upload_due_to_global_timeout = {'count': 0}
+
+
 
 entry_to_group = {
     'n_0_1': 'g0', 'n_0_2': 'g0', 'n_0_3': 'g0', 'n_0_4': 'g0', 'n_0_5': 'g0',
@@ -106,9 +110,19 @@ if __name__ == '__main__':
     global_clock = GlobalClock()
     global_clock.start()  # 啟動全域時鐘
     
-    global_server = GlobalServer(global_data_path=DATA_PATH, total_edge_servers=4,upload_due_to_position=upload_due_to_position, T=120, global_clock = global_clock)
+    global_server = GlobalServer(global_data_path=DATA_PATH, 
+                                 total_edge_servers=4,
+                                 upload_due_to_position=upload_due_to_position, 
+                                 upload_due_to_early_stop=upload_due_to_early_stop, 
+                                 upload_due_to_global_timeout=upload_due_to_global_timeout,
+                                 T=120, global_clock = global_clock)
     # 定義 Edge Servers
-    edge_servers = init_edge_servers(cached_node_data,DATA_PATH, active_training_threads, global_server, global_clock, upload_due_to_position)
+    edge_servers = init_edge_servers(cached_node_data,DATA_PATH, 
+                                    active_training_threads, 
+                                    global_server, global_clock, 
+                                    upload_due_to_position,
+                                    upload_due_to_early_stop,
+                                    upload_due_to_global_timeout)
 
         
     real_time_step = 1.0
@@ -120,7 +134,10 @@ if __name__ == '__main__':
     
     for server in edge_servers.values():
         server.start()
-        
+    
+    if os.path.exists("logs/train_stats.csv"):
+        os.remove("logs/train_stats.csv")
+ 
     while sim_thread.step < 18000:
         sim_thread.step_event.wait()     # 等待模擬 step 結束
         sim_thread.step_event.clear()    # 重置事件（準備下次等待）
@@ -144,17 +161,34 @@ if __name__ == '__main__':
                     if group is None:
                         log(global_clock, f"[警告] 未知 entry node {start_node}，預設為 g0")
                         group = 'g0'
+                        
                     max_speed = traci.vehicle.getMaxSpeed(vid)
+                    compute_power = random.randint(1, 4)
+                    route_length = len(route)
+                    
+                    # # 計算目前剩餘邊數（route 邊數 - 已經走過的 index）
+                    # try:
+                    #     index = traci.vehicle.getRouteIndex(vid)
+                    #     remaining_steps = len(route) - index
+                    # except Exception as e:
+                    #     remaining_steps = -1  # 若無法取得，設為 -1
+                    #     log(global_clock, f"[錯誤] 無法取得 {vid} 剩餘邊數：{e}")
 
                     active_training_threads[vid] = {
                         "entry_node": start_node,
                         "trainer": None,
                         "data_group": group,
-                        "max_speed": max_speed 
+                        "max_speed": max_speed,
+                        "compute_power": compute_power,
+                        "route_length": route_length
+                        # "train_count": 0 
                     }
                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
                     assigned = active_training_threads[vid]['data_group']
-                    log(global_clock,f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，分配到資料 {assigned}")
+                    # log(global_clock,f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，分配到資料 {assigned}")
+                    log(global_clock,
+                        f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，"
+                        f"data={assigned}，速度={max_speed}，能力={compute_power}，，路徑長度={route_length}")
 
 
             except traci.exceptions.TraCIException:

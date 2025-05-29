@@ -27,7 +27,7 @@ def unnormalize(image):
 
 # ✅ 用 trainer.py 版本邏輯（對一張圖模擬）
 def apply_motion_blur_like_trainer(data, max_speed):
-    sigma = max(0, 0.1 * max_speed - 0.5)
+    sigma = 0.2
 
     # 模擬 batch 處理，但這裡只處理一張圖 (N=1)
     data = data.reshape(1, 3, 32, 32)

@@ -18,7 +18,12 @@ import numpy as np
 
 
 class GlobalServer(threading.Thread):
-    def __init__(self, global_data_path, total_edge_servers, upload_due_to_position, T=120, device='cuda', global_clock=None):
+    def __init__(self, global_data_path, 
+                 total_edge_servers, 
+                 upload_due_to_position, 
+                 upload_due_to_early_stop, 
+                 upload_due_to_global_timeout,
+                 T=120, device='cuda', global_clock=None):
         super().__init__(daemon=True)
         self.T = T
         self.device = device
@@ -29,6 +34,10 @@ class GlobalServer(threading.Thread):
         self.model_version = 1
         self.upload_due_to_position = upload_due_to_position
         self.position_upload_history = []
+        self.upload_due_to_early_stop = upload_due_to_early_stop  # ← 和 position 一樣來自外部
+        self.early_stop_upload_history = []
+        self.upload_due_to_global_timeout = upload_due_to_global_timeout
+        self.global_timeout_upload_history = []
         self.global_data = self.load_global_data(global_data_path)
         self.global_dataloader = create_dataloader(self.global_data, batch_size=64)
         self.total_edge_servers = total_edge_servers
@@ -37,6 +46,11 @@ class GlobalServer(threading.Thread):
         self.accuracy_history = []
         self.aggregating = False
         self.aggregate_lock = threading.Lock()
+        self.discarded_model_upload_history = []
+        self.discarded_model_upload_total = 0
+        self.discarded_model_uploads_this_round = 0
+
+
 
         atexit.register(self.safe_shutdown)
 
@@ -149,19 +163,73 @@ class GlobalServer(threading.Thread):
         ax2.tick_params(axis='y', labelcolor='tab:red')
 
         # 額外軸顯示「非 loss 上傳」車輛數（右側第二個 y 軸）
-        if hasattr(self, 'position_upload_history'):
-            ax3 = ax1.twinx()
-            ax3.spines["right"].set_position(("axes", 1.1))  # 把第 2 條 y 軸右移
-            ax3.set_ylabel("#Upload due to position", color='tab:green')
-            ax3.plot(rounds, self.position_upload_history, label="Upload due to position", marker='.', color='tab:green', linestyle=':')
-            ax3.tick_params(axis='y', labelcolor='tab:green')
+        # if hasattr(self, 'position_upload_history'):
+        #     ax3 = ax1.twinx()
+        #     ax3.spines["right"].set_position(("axes", 1.1))  # 把第 2 條 y 軸右移
+        #     ax3.set_ylabel("#Upload due to position", color='tab:green')
+        #     ax3.plot(rounds, self.position_upload_history, label="Upload due to position", marker='.', color='tab:green', linestyle=':')
+        #     ax3.tick_params(axis='y', labelcolor='tab:green')
 
+        # 額外軸顯示「early stop 上傳」車輛數（右側第三個 y 軸）
+        # if hasattr(self, 'early_stop_upload_history'):
+        #     ax4 = ax1.twinx()
+        #     ax4.spines["right"].set_position(("axes", 1.2))  # 把第 3 條 y 軸右移
+        #     ax4.set_ylabel("#Upload due to early stop", color='tab:orange')
+        #     ax4.plot(rounds, self.early_stop_upload_history, label="Upload due to early stop", marker='.', color='tab:orange', linestyle=':')
+        #     ax4.tick_params(axis='y', labelcolor='tab:orange')
+            
+        # 額外軸顯示「global timeout 上傳」車輛數（右側第四個 y 軸）
+        # if hasattr(self, 'global_timeout_upload_history'):
+        #     ax5 = ax1.twinx()
+        #     ax5.spines["right"].set_position(("axes", 1.3))  # 更右邊
+        #     ax5.set_ylabel("#Upload due to global timeout", color='tab:purple')
+        #     ax5.plot(rounds, self.global_timeout_upload_history, label="Upload due to timeout", marker='.', color='tab:purple', linestyle=':')
+        #     ax5.tick_params(axis='y', labelcolor='tab:purple')
+
+
+        
         plt.title("Global Model Training Metrics Over Rounds")
         plt.grid(True)
         plt.tight_layout()
         os.makedirs("logs", exist_ok=True)
         plt.savefig("logs/global_training_metrics.png")
         plt.close()
+        
+    def save_upload_reason_plot(self):
+        rounds = range(1, len(self.position_upload_history) + 1)
+        num_rounds = len(rounds)
+
+        # 與主圖一致的 tick_step 設定
+        if num_rounds <= 20:
+            tick_step = 1
+        elif num_rounds <= 50:
+            tick_step = 2
+        elif num_rounds <= 100:
+            tick_step = 5
+        elif num_rounds <= 200:
+            tick_step = 10
+        else:
+            tick_step = 20
+
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, self.position_upload_history, marker='o', linestyle='--', color='tab:green', label='Position')
+        plt.plot(rounds, self.early_stop_upload_history, marker='x', linestyle='-', color='tab:orange', label='Early Stop')
+        plt.plot(rounds, self.global_timeout_upload_history, marker='s', linestyle=':', color='tab:purple', label='Global Timeout')
+        plt.plot(rounds, self.discarded_model_upload_history, marker='^', linestyle='-.', color='tab:gray', label='Discarded due to version')
+
+
+        plt.xlabel("Global Aggregation Round")
+        plt.ylabel("Number of Uploads")
+        plt.title("Upload Reasons Over Global Rounds")
+        plt.xticks(rounds[::tick_step], [str(r) for r in rounds[::tick_step]])  # 對齊主圖 x 軸
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        os.makedirs("logs", exist_ok=True)
+        plt.savefig("logs/upload_reasons.png")
+        plt.close()
+
         
     def save_per_class_accuracy_heatmap(self):
         if not self.per_class_accuracy_log:
@@ -279,9 +347,23 @@ class GlobalServer(threading.Thread):
                 self.position_upload_history.append(self.upload_due_to_position['count'])
                 self.logger.info(f"第 {self.model_version} 輪：{self.position_upload_history[-1]} 輛車是因為 position 而上傳")
                 self.upload_due_to_position['count'] = 0  # 重置統計器
+                self.early_stop_upload_history.append(self.upload_due_to_early_stop['count'])
+                self.logger.info(f"第 {self.model_version} 輪：{self.early_stop_upload_history[-1]} 輛車是因為 early stop 而上傳")
+                self.upload_due_to_early_stop['count'] = 0  # 重置計數器
+                self.global_timeout_upload_history.append(self.upload_due_to_global_timeout['count'])
+                self.logger.info(f"第 {self.model_version} 輪：{self.global_timeout_upload_history[-1]} 輛車是因為 global timeout 而上傳")
+                self.upload_due_to_global_timeout['count'] = 0  # 重置
+                self.discarded_model_upload_history.append(self.discarded_model_uploads_this_round)
+                self.logger.info(f"第 {self.model_version} 輪：{self.discarded_model_uploads_this_round} 個模型因版本落後被棄用，上傳失敗")
+                self.logger.info(f"目前累積棄用模型總數：{self.discarded_model_upload_total}")
+                self.discarded_model_uploads_this_round = 0
+
+
+
                 self.loss_history.append(loss)
                 self.accuracy_history.append(accuracy)
                 self.save_training_plot()
+                self.save_upload_reason_plot()
 
                 if accuracy >= 85.0:
                     try:

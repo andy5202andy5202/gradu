@@ -40,20 +40,91 @@ def save_image_pair(original, blurred, vehicle_id, speed, index=0):
 
 
 
+# def apply_motion_blur(data, max_speed, vehicle_id=None, logger=None):
+#     """
+#     根據 max_speed 對圖像資料套用高斯模糊（使用 OpenCV），保留 shape 與 dtype。
+#     並檢查模糊差異、是否出現 NaN。
+#     """
+#     if logger:
+#         try:
+#             logger.info(f"{vehicle_id} 原始資料範圍：min={data.min():.3f}, max={data.max():.3f}")
+#         except Exception as e:
+#             logger.warning(f"{vehicle_id} 原始資料範圍無法計算：{e}")
+    
+#     sigma = max(0, 0.05 * max_speed - 0.5)
+
+#     # 不模糊（完全跳過 OpenCV）
+#     if sigma == 0:
+#         if logger:
+#             logger.info(f"{vehicle_id} sigma=0 → 跳過模糊處理")
+#         return data.copy()
+
+#     # 確保 shape 正確
+#     if data.ndim == 2 and data.shape[1] == 3072:
+#         data = data.reshape(-1, 3, 32, 32)
+#     elif data.ndim == 1 and data.shape[0] == 3072:
+#         data = data.reshape(1, 3, 32, 32)
+#     elif data.ndim == 4 and data.shape[1:] == (3, 32, 32):
+#         pass
+#     else:
+#         raise ValueError(f"Unexpected data shape: {data.shape}")
+
+#     blurred_list = []
+#     total_diff = []
+#     nan_flag = False
+#     ksize = int(2 * round(sigma * 3) + 1)  # 推薦 kernel size = 6*sigma+1
+
+#     for img_idx, image in enumerate(data):
+#         # (3, 32, 32) → (32, 32, 3) & scale to [0, 255]
+#         img_uint8 = ((image * 0.5 + 0.5) * 255).astype(np.uint8).transpose(1, 2, 0)
+
+#         blurred = cv2.GaussianBlur(img_uint8, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
+
+#         blurred = blurred.transpose(2, 0, 1).astype(np.float32)
+#         blurred = (blurred / 255.0 - 0.5) / 0.5  # 回到 [-1, 1]
+#         blurred_list.append(blurred)
+        
+
+#         # 差異偵測
+#         diff = np.abs(blurred - image)
+#         total_diff.append(diff.mean())
+#         if np.isnan(blurred).any():
+#             nan_flag = True
+#     if logger:
+#         logger.info(
+#             f"{vehicle_id} 模糊處理完成：σ={sigma:.2f}，樣本數={len(data)}，平均差異={np.mean(total_diff):.6f}"
+#         )
+#         if nan_flag:
+#             logger.warning(f"{vehicle_id} 模糊後存在 NaN")
+            
+#     if logger:
+#         try:
+#             final_array = np.array(blurred_list, dtype=np.float32)
+#             logger.info(f"{vehicle_id} 模糊後資料範圍：min={final_array.min():.3f}, max={final_array.max():.3f}")
+#         except Exception as e:
+#             logger.warning(f"{vehicle_id} 模糊後資料範圍無法計算：{e}")
+
+
+#     return np.array(blurred_list, dtype=np.float32)
+
 def apply_motion_blur(data, max_speed, vehicle_id=None, logger=None):
     """
-    根據 max_speed 對圖像資料套用高斯模糊（使用 OpenCV），保留 shape 與 dtype。
-    並檢查模糊差異、是否出現 NaN。
+    根據 max_speed 決定模糊比例（最多 20%），對部分圖像套用固定強度的模糊（σ = 0.2）。
     """
-    sigma = max(0, 0.02 * max_speed - 0.5)
+    if logger:
+        try:
+            logger.info(f"{vehicle_id} 原始資料範圍：min={data.min():.3f}, max={data.max():.3f}")
+        except:
+            logger.warning(f"{vehicle_id} 原始資料範圍無法計算")
 
-    # 不模糊（完全跳過 OpenCV）
-    if sigma == 0:
-        if logger:
-            logger.info(f"{vehicle_id} sigma=0 → 跳過模糊處理")
-        return data.copy()
+    # 固定模糊強度（σ = 0.2）
+    sigma = 0.4
+    ksize = int(2 * round(sigma * 3) + 1)  
 
-    # 確保 shape 正確
+    # 計算模糊比例，最高 20%
+    p_blur = min(0.2, max_speed / 20.0 * 0.2)
+
+    # 資料 reshape
     if data.ndim == 2 and data.shape[1] == 3072:
         data = data.reshape(-1, 3, 32, 32)
     elif data.ndim == 1 and data.shape[0] == 3072:
@@ -66,43 +137,66 @@ def apply_motion_blur(data, max_speed, vehicle_id=None, logger=None):
     blurred_list = []
     total_diff = []
     nan_flag = False
-    ksize = int(2 * round(sigma * 3) + 1)  # 推薦 kernel size = 6*sigma+1
+    n_blur = 0
+    # p_blur = -1000
 
     for img_idx, image in enumerate(data):
-        # (3, 32, 32) → (32, 32, 3) & scale to [0, 255]
-        img_uint8 = ((image * 0.5 + 0.5) * 255).astype(np.uint8).transpose(1, 2, 0)
+        apply_blur = np.random.rand() < p_blur
+        if apply_blur:
+            n_blur += 1
+            image = np.clip(image, -1.0, 1.0)
+            img_uint8 = ((image * 0.5 + 0.5) * 255).round().astype(np.uint8).transpose(1, 2, 0)
+            blurred = cv2.GaussianBlur(img_uint8, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
+            blurred = blurred.transpose(2, 0, 1).astype(np.float32)
+            blurred = (blurred / 255.0 - 0.5) / 0.5
+            blurred = np.clip(blurred, -1.0, 1.0)
+            
+            diff = np.abs(blurred - image)
+            total_diff.append(diff.mean())
+        else:
+            blurred = np.array(image, dtype=np.float32)
+            total_diff.append(0.0)
 
-        blurred = cv2.GaussianBlur(img_uint8, (ksize, ksize), sigmaX=sigma, sigmaY=sigma)
-
-        blurred = blurred.transpose(2, 0, 1).astype(np.float32)
-        blurred = (blurred / 255.0 - 0.5) / 0.5  # 回到 [-1, 1]
-        blurred_list.append(blurred)
-
-        # 差異偵測
-        diff = np.abs(blurred - image)
-        total_diff.append(diff.mean())
         if np.isnan(blurred).any():
             nan_flag = True
+
+        blurred_list.append(blurred)
+
     if logger:
         logger.info(
-            f"{vehicle_id} 模糊處理完成：σ={sigma:.2f}，樣本數={len(data)}，平均差異={np.mean(total_diff):.6f}"
+            f"{vehicle_id} 模糊處理完成：maxSpeed={max_speed:.1f}, p_blur={p_blur:.3f}, σ={sigma:.2f}, "
+            f"模糊張數={n_blur}/{len(data)}, 平均差異={np.mean(total_diff):.6f}"
         )
         if nan_flag:
             logger.warning(f"{vehicle_id} 模糊後存在 NaN")
 
-    return np.array(blurred_list, dtype=np.float32)
+    final = np.stack(blurred_list)
+    
+    if logger:
+        logger.info(f"{vehicle_id} 最終輸出 shape={final.shape}, dtype={final.dtype}")
+    return final
+
 
 
 class VehicleTrainer(threading.Thread):
     
-    def __init__(self, vehicle_id, data_for_vehicle, edge_server, upload_due_to_position_counter, device='cuda'):
+    def __init__(self, vehicle_id, data_for_vehicle, edge_server,
+                upload_due_to_position_counter, 
+                upload_due_to_early_stop, 
+                upload_due_to_global_timeout_counter,
+                global_deadline,
+                device='cuda'):
         super().__init__()
         self.vehicle_id = vehicle_id
         self.data_for_vehicle = data_for_vehicle
         self.device = device
         self.edge_server = edge_server
         self.upload_due_to_position_counter = upload_due_to_position_counter
+        self.upload_due_to_early_stop = upload_due_to_early_stop
+        self.upload_due_to_global_timeout_counter = upload_due_to_global_timeout_counter
         self.global_clock = edge_server.global_clock
+        self.global_deadline = global_deadline
+
         self.started_event = threading.Event()
         
         self.logger = self.setup_shared_logger()
@@ -119,13 +213,30 @@ class VehicleTrainer(threading.Thread):
         self.model.load_state_dict(model_state_dict)
         
         self.logger.info(f"{self.vehicle_id} state_dict 載入完成")
+        vehicle_info = self.edge_server.active_training_threads.get(self.vehicle_id, {})
+        
+        self.compute_power = vehicle_info.get('compute_power', 2)
+        self.max_speed = vehicle_info.get('max_speed', 15.0)
+        self.remaining_steps = vehicle_info.get('remaining_steps', -1)
+
+        # 依 compute_power 設定 batch size
+        self.batch_size = 16 * self.compute_power
+
+        # 模擬延遲（越慢的 compute_power → 越久）
+        self.simulated_delay = 0.1 * (5 - self.compute_power)
+
+        self.logger.info(
+            f"{self.vehicle_id} 訓練設定：compute_power={self.compute_power}, batch_size={self.batch_size}, "
+            f"max_speed={self.max_speed:.1f}, remaining_steps={self.remaining_steps}, 模擬延遲={self.simulated_delay:.2f}s"
+        )
+
         
         self.epoch = 150
         self.loss_threshold = 0.1
-        self.batch_size = 64
+        # self.batch_size = 64
         self.learning_rate = 0.01
         self.early_stop_patience = 5
-        self.min_delta = 0.005
+        # self.min_delta = 0.005
         self.trained = False
         self.global_version = self.edge_server.global_server.model_version
         print(f"車輛 {self.vehicle_id} 拿到 {self.edge_server.server_id} 的模型版本 {self.model_version}（全局版本 {self.global_version}），開始訓練。")
@@ -168,40 +279,59 @@ class VehicleTrainer(threading.Thread):
     def run(self):
         self.started_event.set()
         
-        # # 模糊處理
-        # try:
-        #     max_speed = self.edge_server.active_training_threads[self.vehicle_id]['max_speed']
-        #     original = self.data_for_vehicle['data']
+        # 模糊處理
+        try:
+            max_speed = self.edge_server.active_training_threads[self.vehicle_id]['max_speed']
+            original = self.data_for_vehicle['data']
 
-        #     # 必要的轉換
-        #     if original.ndim == 1 and original.shape[0] == 3072:
-        #         original = original.reshape(1, 3, 32, 32)
-        #     elif original.ndim == 2 and original.shape[1] == 3072:
-        #         original = original.reshape(-1, 3, 32, 32)
+            # 必要的轉換
+            if original.ndim == 1 and original.shape[0] == 3072:
+                original = original.reshape(1, 3, 32, 32)
+            elif original.ndim == 2 and original.shape[1] == 3072:
+                original = original.reshape(-1, 3, 32, 32)
 
-        #     original = (original / 255.0 - 0.5) / 0.5  
-        #     original = original.astype(np.float32)
+            # 如果已經是標準化後的 [-1,1]，就不要再做
+            if original.max() > 2.0 or original.min() < -2.0:
+                original = (original / 255.0 - 0.5) / 0.5
+                self.logger.info(f"{self.vehicle_id} 對資料進行標準化")
+            else:
+                self.logger.info(f"{self.vehicle_id} 偵測資料已標準化，跳過")
+
             
             
-        #     blurred = apply_motion_blur(original, max_speed, vehicle_id=self.vehicle_id, logger=self.logger)
+            blurred = apply_motion_blur(original, max_speed, vehicle_id=self.vehicle_id, logger=self.logger)
 
-        #     # 只在模糊成功後儲存圖片
-        #     try:
-        #         vid_num = int(self.vehicle_id.replace("veh", ""))
-        #         if vid_num < 50:
-        #             save_image_pair(original[0], blurred[0], self.vehicle_id, max_speed)
-        #     except Exception as e:
-        #         self.logger.warning(f"{self.vehicle_id} 儲存模糊圖像時出錯：{e}")
+            # 只在模糊成功後儲存圖片
+            try:
+                vid_num = int(self.vehicle_id.replace("veh", ""))
+                if vid_num < 50:
+                    save_image_pair(original[0], blurred[0], self.vehicle_id, max_speed)
+            except Exception as e:
+                self.logger.warning(f"{self.vehicle_id} 儲存模糊圖像時出錯：{e}")
             
-        #     blurred = blurred.reshape(len(blurred), -1)
-        #     self.data_for_vehicle['data'] = blurred
-        #     self.logger.info(f"{self.vehicle_id} 模糊處理完成（maxSpeed = {max_speed:.1f}, σ={max(0, 0.08 * max_speed - 0.5):.2f}）")
+            blurred = blurred.reshape(len(blurred), -1)
+            self.data_for_vehicle['data'] = blurred
+            self.logger.info(f"{self.vehicle_id} 模糊處理完成（maxSpeed = {max_speed:.1f}")
 
-        # except Exception as e:
-        #     self.logger.warning(f"{self.vehicle_id} 模糊處理失敗：{e}")
+        except Exception as e:
+            self.logger.warning(f"{self.vehicle_id} 模糊處理失敗：{e}")
 
-
-        self.model, loss, finish_reason = train_model(
+        # self.model, loss, finish_reason = train_model(
+        #     self.model,
+        #     self.data_for_vehicle,
+        #     vehicle_id=self.vehicle_id,
+        #     epochs=self.epoch,
+        #     batch_size=self.batch_size,
+        #     learning_rate=self.learning_rate,
+        #     device=self.device,
+        #     loss_threshold=self.loss_threshold,
+        #     logger=self.logger,
+        #     early_stop_patience=self.early_stop_patience, 
+        #     min_delta=self.min_delta
+        # )
+        
+        start_time = time.time()
+        self.model, loss, finish_reason, epoch_trained = train_model(
             self.model,
             self.data_for_vehicle,
             vehicle_id=self.vehicle_id,
@@ -212,14 +342,53 @@ class VehicleTrainer(threading.Thread):
             loss_threshold=self.loss_threshold,
             logger=self.logger,
             early_stop_patience=self.early_stop_patience, 
-            min_delta=self.min_delta
+            # min_delta=self.min_delta,
+            global_clock=self.global_clock,
+            global_deadline=self.global_deadline,
+            delay_scale=self.simulated_delay  
         )
+        end_time = time.time()
+        elapsed = end_time - start_time
+        # epoch_trained = self.epoch  # 你目前沒有實際早停時紀錄，這樣寫代表訓練完整 150
+        avg_epoch_time = elapsed / epoch_trained if epoch_trained > 0 else 0.0
+        
+        self.logger.info(
+            f"{self.vehicle_id} 訓練完成：總耗時={elapsed:.2f}s, epoch={epoch_trained}, 每 epoch={avg_epoch_time:.3f}s"
+        )
+        
+       
+        # with open("logs/train_stats.csv", "a") as f:
+        #     f.write(f"{self.vehicle_id},{self.compute_power},{self.batch_size},{epoch_trained},{elapsed:.4f},{avg_epoch_time:.4f},{self.simulated_delay:.3f}\n")
+
 
         if finish_reason == 'position':
             self.upload_due_to_position_counter['count'] += 1
+            
+        if finish_reason == 'early_stop':
+            self.upload_due_to_early_stop['count'] += 1
         
-        if finish_reason in ('early_stop', 'position'):
+        if finish_reason == 'global_timeout':
+            self.upload_due_to_global_timeout_counter['count'] += 1
+
+        if finish_reason in ('early_stop', 'position', 'global_timeout'):
+            # self.edge_server.active_training_threads[self.vehicle_id]['train_count'] += 1
             self.trained = True
+        
+        # 輸出到 CSV
+        os.makedirs("logs", exist_ok=True)
+
+        try:
+            # train_count = self.edge_server.active_training_threads[self.vehicle_id].get("train_count", 0)
+            with open("logs/train_stats.csv", "a") as f:
+                f.write(
+                    f"{self.vehicle_id},{self.compute_power},{self.batch_size},"
+                    f"{epoch_trained},{elapsed:.4f},{avg_epoch_time:.4f},"
+                    f"{self.simulated_delay:.3f}\n"
+                )
+        except Exception as e:
+            self.logger.warning(f"{self.vehicle_id} 寫入 train_stats.csv 時發生錯誤：{e}")
+
+
 
         # 訓練完成後回傳模型參數（上傳邏輯放這裡）
         self.model.cpu()
@@ -242,6 +411,8 @@ class VehicleTrainer(threading.Thread):
                     self.logger.info(f"車輛 {self.vehicle_id} 完成訓練並回傳參數給 {self.edge_server.server_id}（版本 {self.model_version}）")
                 else:
                     print(f"[棄用模型] 車輛 {self.vehicle_id} 的模型版本 {self.global_version} ≠ {self.edge_server.server_id} 當前全局版本 {current_global_version} → 不上傳")
+                    self.edge_server.global_server.discarded_model_upload_total += 1  # 累積
+                    self.edge_server.global_server.discarded_model_uploads_this_round += 1  # 本輪暫存
                     self.logger.info(f"[棄用模型] 車輛 {self.vehicle_id} 的模型版本 {self.global_version} ≠ {self.edge_server.server_id} 當前全局版本 {current_global_version} → 不上傳")
                
                 print(f"車輛 {self.vehicle_id} 訓練完成，回復為可選對象")

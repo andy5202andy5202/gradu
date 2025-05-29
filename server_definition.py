@@ -13,7 +13,12 @@ from global_server import GlobalServer
 import logging
 
 class EdgeServer(threading.Thread):
-    def __init__(self, server_id, covered_edges,cached_node_data, global_data_path, active_training_threads, global_server,upload_due_to_position, global_clock=None, global_time=120, waiting_time=30, device='cuda'):
+    def __init__(self, server_id, covered_edges,cached_node_data, 
+                global_data_path, active_training_threads, 
+                global_server,upload_due_to_position,
+                upload_due_to_early_stop,
+                upload_due_to_global_timeout_counter, 
+                global_clock=None, global_time=120, waiting_time=30, device='cuda'):
         super().__init__(daemon=True)
         self.server_id = server_id
         self.covered_edges = covered_edges
@@ -27,6 +32,8 @@ class EdgeServer(threading.Thread):
         self.waiting_time = waiting_time
         self.device = device
         self.upload_due_to_position = upload_due_to_position
+        self.upload_due_to_early_stop = upload_due_to_early_stop
+        self.upload_due_to_global_timeout_counter = upload_due_to_global_timeout_counter
         self.model = SmallResNet(num_classes=10).to(self.device)
         self.received_models = []
         self.last_selection_time = time.time()
@@ -74,14 +81,34 @@ class EdgeServer(threading.Thread):
         """提供最新的模型與版本號"""
         return self.model.state_dict(), self.model_version
     
-    def update_model(self, new_state_dict, new_version):
+    # def update_model(self, new_state_dict, new_version):
+    #     """
+    #     從 Global Server 收到新的模型參數並更新版本
+    #     """
+    #     self.model.load_state_dict(new_state_dict)
+    #     self.model_version = new_version
+    #     # print(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
+    #     self.logger.info(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
+    
+    def update_model(self, new_state_dict, new_version, alpha=1):
         """
-        從 Global Server 收到新的模型參數並更新版本
+        Edge Server 對 Global Server 傳下來的模型進行 momentum 融合更新。
+        θ_edge ← (1 - α) * θ_edge + α * θ_global
         """
-        self.model.load_state_dict(new_state_dict)
+        old_state_dict = self.model.state_dict()
+        new_state_dict_smooth = {}
+
+        for key in old_state_dict:
+            if isinstance(old_state_dict[key], torch.Tensor) and torch.is_floating_point(old_state_dict[key]):
+                new_param = (1 - alpha) * old_state_dict[key] + alpha * new_state_dict[key].to(old_state_dict[key].device)
+                new_state_dict_smooth[key] = new_param
+            else:
+                new_state_dict_smooth[key] = new_state_dict[key]
+
+        self.model.load_state_dict(new_state_dict_smooth)
         self.model_version = new_version
-        # print(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
-        self.logger.info(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
+        self.logger.info(f"{self.server_id} 使用 α={alpha} momentum 更新模型 → 版本 {new_version}")
+
 
     def is_in_range(self, edge_id):
         return edge_id in self.covered_edges
@@ -104,6 +131,7 @@ class EdgeServer(threading.Thread):
     def run(self):
         while True:
             round_start = self.global_clock.get_time()  # 換用全局時間
+            global_deadline = round_start + self.global_time
             total_slots = int(self.global_time / self.waiting_time)
             
             for current_slot in range(total_slots):  
@@ -116,6 +144,8 @@ class EdgeServer(threading.Thread):
 
                 # 1. 車輛選擇
                 vehicles_in_area = []
+                vehicle_infos = []
+                
                 active_threads_copy = self.active_training_threads.copy()
                 for vid, vehicle_info in active_threads_copy.items():
                     if vehicle_info.get('trainer') is None:  # 還沒開始訓練的車輛
@@ -124,13 +154,30 @@ class EdgeServer(threading.Thread):
                         try:
                             position = traci.vehicle.getRoadID(vid)
                             if position and position.startswith("n_") and self.is_in_range(position):  # position 是 edge_id
+                                compute_power = vehicle_info.get('compute_power', -1)
+                                route_length = vehicle_info.get('route_length', -1)
+                                
+                                try:
+                                    route_index = traci.vehicle.getRouteIndex(vid)
+                                    remaining_steps = route_length - route_index
+                                except Exception as e:
+                                    remaining_steps = -1
+                                    self.logger.warning(f"{self.server_id} 無法取得 {vid} 的 route index：{e}")
+                                vehicle_info["remaining_steps"] = remaining_steps
                                 vehicles_in_area.append(vid)
+                                vehicle_infos.append((vid, compute_power, route_length, remaining_steps))
                         except Exception as e:
                             # print(f'取得車輛 {vid} 位置時發生錯誤：{e}')
                             self.logger.info(f'取得車輛 {vid} 位置時發生錯誤：{e}')
 
                 # print(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
                 self.logger.info(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
+                if vehicle_infos:
+                    self.logger.info(f"{self.server_id} 可選車輛資訊如下：")
+                    for vid, cp, rl, rs in vehicle_infos:
+                        self.logger.info(f"{vid} | compute={cp} | route_len={rl} | remain={rs}")
+                else:
+                    self.logger.info(f"{self.server_id} 此 slot 無可選車輛。")
 
                 # 隨機選擇最多三輛車來訓練
                 num_to_select = random.randint(0, len(vehicles_in_area))
@@ -165,7 +212,12 @@ class EdgeServer(threading.Thread):
                     self.logger.info(f"{self.server_id} 準備啟動車輛 {vid} 的 trainer 進行訓練")
 
                     try:
-                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, upload_due_to_position_counter=self.upload_due_to_position, device=self.device)
+                        trainer = VehicleTrainer(vid, vehicle_info['data'], self, 
+                                                upload_due_to_position_counter=self.upload_due_to_position,
+                                                upload_due_to_early_stop=self.upload_due_to_early_stop, 
+                                                upload_due_to_global_timeout_counter=self.upload_due_to_global_timeout_counter,
+                                                global_deadline=global_deadline,
+                                                device=self.device)
                         trainer.start()
 
                         success = trainer.started_event.wait(timeout=1.0)

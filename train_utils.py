@@ -271,7 +271,7 @@ def aggregate_models(models, self):
         Ke_list = [m[1] for m in models]
         weight_sum = sum(Ke_list)
         weights = [k / weight_sum for k in Ke_list]
-        alpha = 0.1
+        alpha = 1
         old_state_dict = self.model.state_dict()
 
         self.logger.info(

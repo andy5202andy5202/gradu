@@ -143,7 +143,7 @@ if __name__ == '__main__':
                                  upload_due_to_global_timeout=upload_due_to_global_timeout,
                                  T=120, global_clock = global_clock)
     # 定義 Edge Servers
-    edge_servers = init_edge_servers(cached_node_data,DATA_PATH, 
+    edge_servers = init_edge_servers(cached_blurred_data,DATA_PATH, 
                                     active_training_threads, 
                                     global_server, global_clock, 
                                     upload_due_to_position,

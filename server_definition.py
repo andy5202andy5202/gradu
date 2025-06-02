@@ -90,7 +90,7 @@ class EdgeServer(threading.Thread):
     #     # print(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
     #     self.logger.info(f"{self.server_id} 已更新模型到全局版本 {self.model_version}")
     
-    def update_model(self, new_state_dict, new_version, alpha=1):
+    def update_model(self, new_state_dict, new_version, alpha=0.1):
         """
         Edge Server 對 Global Server 傳下來的模型進行 momentum 融合更新。
         θ_edge ← (1 - α) * θ_edge + α * θ_global
@@ -113,19 +113,34 @@ class EdgeServer(threading.Thread):
     def is_in_range(self, edge_id):
         return edge_id in self.covered_edges
     
+    # def get_data_for_vehicle(self, vehicle_id):
+    #     try:
+    #         group = self.active_training_threads[vehicle_id].get('data_group')
+    #         if group is None:
+    #             print(f"[警告] 車輛 {vehicle_id} 沒有 data_group")
+    #             return None
+    #         if group not in self.cached_node_data:
+    #             print(f"[警告] 車輛 {vehicle_id} 分配到 {group} 但資料沒載入！")
+    #             return None
+    #         return self.cached_node_data[group]
+    #     except Exception as e:
+    #         print(f"[錯誤] EdgeServer 拿車輛 {vehicle_id} 的資料時錯誤：{e}")
+    #         return None
+    
     def get_data_for_vehicle(self, vehicle_id):
         try:
-            group = self.active_training_threads[vehicle_id].get('data_group')
+            info = self.active_training_threads[vehicle_id]
+            group = info.get('data_group')
+            max_speed = info.get('max_speed', 10.0)
             if group is None:
-                print(f"[警告] 車輛 {vehicle_id} 沒有 data_group")
+                self.logger.warning(f"[{vehicle_id}] 缺少 data_group")
                 return None
-            if group not in self.cached_node_data:
-                print(f"[警告] 車輛 {vehicle_id} 分配到 {group} 但資料沒載入！")
-                return None
-            return self.cached_node_data[group]
+            speed_int = int(round(max(1, min(20, max_speed))))
+            return self.cached_node_data[group][speed_int]
         except Exception as e:
-            print(f"[錯誤] EdgeServer 拿車輛 {vehicle_id} 的資料時錯誤：{e}")
+            self.logger.error(f"[{vehicle_id}] 取得資料錯誤：{e}")
             return None
+
 
         
     def run(self):
@@ -181,9 +196,10 @@ class EdgeServer(threading.Thread):
 
                 # 隨機選擇最多三輛車來訓練
                 num_to_select = random.randint(0, len(vehicles_in_area))
-                # selected_vehicles = random.sample(vehicles_in_area,len(vehicles_in_area))
+                # selected_vehicles = random.sample(vehicles_in_area,min(5,len(vehicles_in_area)))
                 selected_vehicles = random.sample(vehicles_in_area,num_to_select)
                 # print(f'{self.server_id} 選中的車輛: {selected_vehicles}')
+                # selected_vehicles = vehicles_in_area  # 全選
                 self.logger.info(f'{self.server_id} 選中的車輛: {selected_vehicles}')
                 self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")
                 

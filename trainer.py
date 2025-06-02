@@ -211,6 +211,27 @@ class VehicleTrainer(threading.Thread):
         self.logger.info(f"{self.vehicle_id} SmallResNet 模型建好並移到 {self.device}")
         
         self.model.load_state_dict(model_state_dict)
+        # 額外記錄資料內容與 label 分佈
+        try:
+            data_array = self.data_for_vehicle.get('data', None)
+            labels_array = self.data_for_vehicle.get('labels', None)
+
+            if data_array is not None:
+                shape = np.shape(data_array)
+                min_val, max_val = np.min(data_array), np.max(data_array)
+                self.logger.info(f"{self.vehicle_id} 拿到資料 shape={shape}, 範圍=({min_val:.3f}, {max_val:.3f})")
+            else:
+                self.logger.warning(f"{self.vehicle_id} 資料為 None")
+
+            if labels_array is not None:
+                num_classes = len(set(labels_array))
+                example_labels = labels_array[:10]
+                self.logger.info(f"{self.vehicle_id} 標籤總類數={num_classes}, 範例={example_labels}")
+            else:
+                self.logger.warning(f"{self.vehicle_id} 無標籤資料")
+        except Exception as e:
+            self.logger.warning(f"{self.vehicle_id} 資料紀錄時發生錯誤：{e}")
+
         
         self.logger.info(f"{self.vehicle_id} state_dict 載入完成")
         vehicle_info = self.edge_server.active_training_threads.get(self.vehicle_id, {})
@@ -224,6 +245,7 @@ class VehicleTrainer(threading.Thread):
 
         # 模擬延遲（越慢的 compute_power → 越久）
         self.simulated_delay = 0.1 * (5 - self.compute_power)
+        
 
         self.logger.info(
             f"{self.vehicle_id} 訓練設定：compute_power={self.compute_power}, batch_size={self.batch_size}, "

@@ -4,7 +4,8 @@ import threading
 import torch
 import time
 from train_utils import aggregate_models, calculate_loss_and_accuracy, create_dataloader
-from models.resnet import SmallResNet
+# from models.resnet import SmallResNet
+from models.resnet import CIFAR_CNN
 import logging
 import matplotlib
 matplotlib.use('Agg')  
@@ -29,7 +30,8 @@ class GlobalServer(threading.Thread):
         self.device = device
         self.global_clock = global_clock
         self.logger = self.setup_logger()
-        self.model = SmallResNet(num_classes=10).to(self.device)
+        # self.model = SmallResNet(num_classes=10).to(self.device)
+        self.model = CIFAR_CNN(num_classes=10).to(self.device)
         self.received_models = []
         self.model_version = 1
         self.upload_due_to_position = upload_due_to_position

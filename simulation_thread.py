@@ -3,6 +3,8 @@ import threading
 import time
 import traci
 import torch
+import subprocess
+import os
 
 class SimulationThread(threading.Thread):
     def __init__(self, step_limit=10000, real_time_step=1.0):
@@ -38,10 +40,40 @@ class SimulationThread(threading.Thread):
     def stop(self):
         self.running = False
 
-def show_gpu_usage():
-    print("="*30, " GPU Memory Usage ", "="*30)
+
+
+def show_gpu_usage(top_k=3):
+    print("="*30, " GPU 使用狀況 ", "="*30)
     for i in range(torch.cuda.device_count()):
-        print(f"[GPU {i}] {torch.cuda.get_device_name(i)}")
-        print(f"  Allocated: {round(torch.cuda.memory_allocated(i) / 1024**2, 1)} MB")
-        print(f"  Cached:    {round(torch.cuda.memory_reserved(i) / 1024**2, 1)} MB")
-    print("="*75)
+        name = torch.cuda.get_device_name(i)
+        alloc = torch.cuda.memory_allocated(i) / 1024**2
+        reserved = torch.cuda.memory_reserved(i) / 1024**2
+        print(f"[GPU {i}] {name}")
+        print(f"  使用中: {alloc:.1f} MB | 緩存: {reserved:.1f} MB")
+
+    try:
+        result = subprocess.check_output(
+            ['nvidia-smi', '--query-compute-apps=pid,used_memory', '--format=csv,noheader,nounits']
+        ).decode().strip().split('\n')
+
+        current_pid = str(os.getpid())
+        gpu_processes = [(pid.strip(), mem.strip()) for pid, mem in (line.split(',') for line in result)]
+        
+        print(f"[INFO] 共 {len(gpu_processes)} 個 GPU Process，前 {top_k} + 本程式：")
+
+        shown = 0
+        for pid, mem in gpu_processes:
+            is_self = pid == current_pid
+            if is_self or shown < top_k:
+                flag = "(本程式)" if is_self else ""
+                print(f"  PID {pid} → {mem} MB {flag}")
+                if not is_self:
+                    shown += 1
+
+        if len(gpu_processes) > top_k + 1:
+            print(f"  ...（略過 {len(gpu_processes) - top_k - 1} 筆）")
+
+    except Exception as e:
+        print(f"[ERROR] 讀取 nvidia-smi 失敗：{e}")
+
+    print("="*70)

@@ -11,13 +11,15 @@ import time
 
 def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001,
     device='cuda', loss_threshold=0.001, logger=None, early_stop_patience=5, delay_scale=None
-    , global_clock=None, global_deadline=None):
+    , global_clock=None, global_deadline=None, position_status_dict=None):
     model.train()
 
     if logger and global_clock and global_deadline:
+        with global_clock.get_lock():
+            current_time = global_clock.value
         logger.info(
             f"[{vehicle_id}] 收到 global deadline = {global_deadline:.2f}s，"
-            f"目前時間 = {global_clock.get_time():.2f}s"
+            f"目前時間 = {current_time:.2f}s"
         )
 
 
@@ -92,7 +94,8 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
         
         # Global 時間判斷
         if global_clock and global_deadline:
-            current_time = global_clock.get_time()
+            with global_clock.get_lock():
+                current_time = global_clock.value
             this_epoch_time = time.time() - epoch_start
             if current_time + this_epoch_time >= global_deadline:
                 print(f"車輛 {vehicle_id} 預估下一輪將超過 global deadline（{global_deadline:.1f}s），提前上傳")
@@ -103,21 +106,14 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
 
         # ===== 位置判斷 =====
         try:
-            if vehicle_id in traci.vehicle.getIDList():
-                route = traci.vehicle.getRoute(vehicle_id)
-                index = traci.vehicle.getRouteIndex(vehicle_id)
-
-                if index == len(route) - 1:
-                    lane_pos = traci.vehicle.getLanePosition(vehicle_id)
-                    lane_id = traci.vehicle.getLaneID(vehicle_id)
-                    lane_length = traci.lane.getLength(lane_id)
-
-                    if lane_pos >= lane_length - 5:
-                        print(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
-                        if logger:
-                            logger.info(f"車輛 {vehicle_id} 完成路徑，位置 {lane_pos:.1f}/{lane_length:.1f} → 結束訓練")
+            if position_status_dict is not None:
+                pos_info = position_status_dict.get(vehicle_id, None)
+                if pos_info:
+                    route_index, route_length = pos_info
+                    if route_index >= route_length - 1:
+                        logger.info(f"車輛 {vehicle_id} 完成路徑，預估位置 {route_index}/{route_length} → 結束訓練")
                         return model, avg_loss, 'position', epoch + 1
-                        
+                                    
             else:
                 print(f"車輛 {vehicle_id} 已離開模擬 → 結束訓練")
                 if logger:
@@ -130,133 +126,8 @@ def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learnin
                 logger.info(f"TraCIException: 無法取得車輛 {vehicle_id} 的位置。該車輛已離開模擬環境→ 結束訓練")
             return model, avg_loss, 'position'
 
-    return model, avg_loss, 'False'  # 沒提前結束，跑滿 epochs
+    return model, avg_loss, 'False', epoch + 1 # 沒提前結束，跑滿 epochs
 
-
-# def aggregate_models(models, self):
-#     if not models:
-#         self.logger.info(f"{getattr(self, 'server_id', 'GlobalServer')} 本輪沒收到參數")
-#         return None
-
-#     model_state_dicts = [m[0] for m in models]
-#     weights = []
-
-#     # ---------------------------------------------------
-#     # Global Server 聚合：使用版本號 (Ke) 作為權重
-#     # ---------------------------------------------------
-#     if getattr(self, "server_id", None) is None:
-#         Ke_list = [m[1] for m in models]  # Edge Server 上傳的 model_version 當作 Ke
-#         weight_sum = sum(Ke_list)
-#         weights = [k / weight_sum for k in Ke_list]
-#         alpha = 0.1
-#         old_state_dict = self.model.state_dict()
-#         self.logger.info(
-#             f"GlobalServer 使用 Ke 加權聚合：\n"
-#             f"→ 收到版本號 (Ke) = {Ke_list}\n"
-#             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
-#         )
-#         # ---------------------
-#         # 聚合模型
-#         # ---------------------
-#         aggregated_state_dict = {}
-#         for key in old_state_dict:
-#             if isinstance(old_state_dict[key], torch.Tensor) and torch.is_floating_point(old_state_dict[key]):
-#                 # 初始化為 0 張量
-#                 agg = torch.zeros_like(old_state_dict[key])
-#                 for i, state_dict in enumerate(model_state_dicts):
-#                     agg += weights[i] * state_dict[key].to(agg.device)
-#                 # Momentum 融合
-#                 aggregated_state_dict[key] = (1 - alpha) * old_state_dict[key] + alpha * agg
-#             else:
-#                 aggregated_state_dict[key] = old_state_dict[key]
-
-#         self.logger.info(
-#             f"GlobalServer 使用 Ke 加權聚合 + α={alpha} 平滑：\n"
-#             f"→ Ke = {Ke_list}\n"
-#             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
-#         )
-
-#         return aggregated_state_dict
-
-#     # ---------------------------------------------------
-#     # Edge Server 聚合：使用 staleness-aware 加權
-#     # ---------------------------------------------------
-#     else:
-#         versions = [m[1] for m in models]  # 每輛車的模型版本
-#         current_version = getattr(self, 'model_version', 0)
-#         delta = 1.0
-
-#         # 計算 staleness 並過濾掉比 server 還新的模型（s < 0）
-#         filtered_models = []
-#         staleness_list = []
-#         for i, v in enumerate(versions):
-#             s = current_version - v
-#             if s >= 0:
-#                 filtered_models.append(models[i])
-#                 staleness_list.append(s)
-
-#         if not filtered_models:
-#             self.logger.info(f"{self.server_id} 本輪沒有合法模型參與聚合")
-#             self.model_version -= 1
-#             return self.model.state_dict()
-
-#         # raw_weights = [1 / (1 + delta * s) for s in staleness_list]
-#         # weight_sum = sum(raw_weights)
-#         # weights = [w / weight_sum for w in raw_weights]
-        
-#         # 提取每個車輛對應的 label 數量（存在模型資訊裡）
-#         label_counts = []
-#         for model_dict, version in filtered_models:
-#             label_count = model_dict.get("label_count", 1)  # 預設 1，防止缺漏
-#             label_counts.append(label_count)
-            
-#         C_max = max(label_counts)
-        
-#         # 結合 label 數 + staleness
-#         raw_weights = [
-#             (c / C_max) * (1 / (1 + delta * s))
-#             for c, s in zip(label_counts, staleness_list)
-#         ]
-        
-#         weight_sum = sum(raw_weights)
-#         weights = [w / weight_sum for w in raw_weights]
-
-#         self.logger.info(
-#             f"{self.server_id} 使用 label-aware + staleness 聚合:\n"
-#             f"→ 使用的模型版本 = {[m[1] for m in filtered_models]}\n"
-#             f"→ Staleness = {staleness_list}\n"
-#             f"→ Label Count = {label_counts}\n"
-#             f"→ 權重 = {[f'{w:.3f}' for w in weights]}"
-#         )
-
-#         model_state_dicts = [m[0] for m in filtered_models]
-#         aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
-#         for key in aggregated_state_dict:
-#             if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
-#                 aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
-#                 for i, state_dict in enumerate(model_state_dicts):
-#                     aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
-#             else:
-#                 # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
-#                 aggregated_state_dict[key] = model_state_dicts[0][key]
-
-#         return aggregated_state_dict
-
-##########################################################################
-    # # ---------------------
-    # # 聚合模型
-    # # ---------------------
-    # aggregated_state_dict = copy.deepcopy(model_state_dicts[0])
-    # for key in aggregated_state_dict:
-    #     if isinstance(aggregated_state_dict[key], torch.Tensor) and torch.is_floating_point(aggregated_state_dict[key]):
-    #         aggregated_state_dict[key] = torch.zeros_like(aggregated_state_dict[key])
-    #         for i, state_dict in enumerate(model_state_dicts):
-    #             aggregated_state_dict[key] += weights[i] * state_dict[key].to(aggregated_state_dict[key].device)
-    #     else:
-    #         # 對非 tensor 或非浮點 tensor 的參數，只保留第一份（或略過）
-    #         aggregated_state_dict[key] = model_state_dicts[0][key]
-
-    # return aggregated_state_dict
 
 def aggregate_models(models, self):
     if not models:
@@ -271,7 +142,7 @@ def aggregate_models(models, self):
         Ke_list = [m[1] for m in models]
         weight_sum = sum(Ke_list)
         weights = [k / weight_sum for k in Ke_list]
-        alpha = 1
+        alpha = 0.1
         old_state_dict = self.model.state_dict()
 
         self.logger.info(
@@ -417,3 +288,4 @@ def calculate_loss_and_accuracy(model, dataloader, criterion, device='cuda'):
 
     model.train()  # 切回訓練模式
     return average_loss, accuracy, per_class_accuracy
+

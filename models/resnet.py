@@ -1,6 +1,6 @@
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 # class BasicBlock(nn.Module):
 #     expansion = 1
@@ -170,46 +170,52 @@
 #         return out
 
 
+
+
+
 #完整官方版18層
-import torch.nn as nn
-from torchvision.models import resnet18
+# import torch.nn as nn
+# from torchvision.models import resnet18
 
-def convert_bn_to_gn(module):
-    for name, child in module.named_children():
-        if isinstance(child, nn.BatchNorm2d):
-            gn = nn.GroupNorm(num_groups=32, num_channels=child.num_features)
-            setattr(module, name, gn)
-        else:
-            convert_bn_to_gn(child)
+# def convert_bn_to_gn(module):
+#     for name, child in module.named_children():
+#         if isinstance(child, nn.BatchNorm2d):
+#             gn = nn.GroupNorm(num_groups=32, num_channels=child.num_features)
+#             setattr(module, name, gn)
+#         else:
+#             convert_bn_to_gn(child)
 
-class SmallResNet(nn.Module):
-    def __init__(self, num_classes=10):
-        super(SmallResNet, self).__init__()
-        self.model = resnet18(weights=None)
-        convert_bn_to_gn(self.model)  # ✅ 替換所有 BatchNorm 為 GroupNorm
-        self.model.fc = nn.Linear(self.model.fc.in_features, num_classes)
-
-    def forward(self, x):
-        return self.model(x)
-
-# simple CNN 
-# class CIFAR_CNN(nn.Module):
+# class SmallResNet(nn.Module):
 #     def __init__(self, num_classes=10):
-#         super(CIFAR_CNN, self).__init__()
-#         self.conv = nn.Sequential(
-#             nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),  # 16x16
-#             nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), # 8x8
-#         )
-#         self.fc = nn.Sequential(
-#             nn.Flatten(),
-#             nn.Linear(64 * 8 * 8, 128), nn.ReLU(),
-#             nn.Linear(128, num_classes)
-#         )
+#         super(SmallResNet, self).__init__()
+#         self.model = resnet18(weights=None)
+#         convert_bn_to_gn(self.model)  # 替換所有 BatchNorm 為 GroupNorm
+#         self.model.fc = nn.Linear(self.model.fc.in_features, num_classes)
 
 #     def forward(self, x):
-#         x = self.conv(x)
-#         x = self.fc(x)
-#         return x
+#         return self.model(x)
+
+
+
+
+# simple CNN 
+class CIFAR_CNN(nn.Module):
+    def __init__(self, num_classes=10):
+        super(CIFAR_CNN, self).__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(3, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),  # 16x16
+            nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2), # 8x8
+        )
+        self.fc = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64 * 8 * 8, 128), nn.ReLU(),
+            nn.Linear(128, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = self.fc(x)
+        return x
 
 # MobileNet
 # import torch

@@ -1,9 +1,272 @@
+# import traci
+# import time
+# import os
+# import pickle
+# import torch
+# from models.resnet import SmallResNet
+# from train_utils import train_model
+# from server_definition import EdgeServer
+# from global_server import GlobalServer
+# from global_clock import GlobalClock  
+# from simulation_thread import SimulationThread
+# from edge_server_init import init_edge_servers
+# import matplotlib
+# matplotlib.use('Agg')  # 使用非 GUI 的 backend（不要 Tkinter / TkAgg）
+# import matplotlib.pyplot as plt
+# import random
+# import multiprocessing as mp
+# from multiprocessing import Manager
+
+# manager = Manager()
+
+# SUMO_BINARY = 'sumo'
+# CONFIG_FILE = 'grid7x7.sumocfg'
+# DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
+
+# active_training_threads = {}  # 在這裡初始化 active_training_threads
+# # cached_node_data = {}
+# cached_blurred_data = {}  # cached_blurred_data[group][speed] = data_dict
+# upload_due_to_position = manager.dict({'count': 0})
+# upload_due_to_early_stop = manager.dict({'count': 0})
+# upload_due_to_global_timeout = manager.dict({'count': 0})
+
+
+
+# entry_to_group = {
+#     'n_0_1': 'g0', 'n_0_2': 'g0', 'n_0_3': 'g0', 'n_0_4': 'g0', 'n_0_5': 'g0',
+#     'n_1_6': 'g1', 'n_2_6': 'g1', 'n_3_6': 'g1', 'n_4_6': 'g1', 'n_5_6': 'g1',
+#     'n_6_1': 'g2', 'n_6_2': 'g2', 'n_6_3': 'g2', 'n_6_4': 'g2', 'n_6_5': 'g2',
+#     'n_1_0': 'g3', 'n_2_0': 'g3', 'n_3_0': 'g3', 'n_4_0': 'g3', 'n_5_0': 'g3',
+# }
+
+
+# # def preload_node_data():
+# #     group_names = [f'g{i}' for i in range(4)]
+# #     for group_name in group_names:
+# #         file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
+# #         if os.path.exists(file_path):
+# #             try:
+# #                 with open(file_path, 'rb') as f:
+# #                     cached_node_data[group_name] = pickle.load(f)
+# #                     print(f"預載成功：{group_name}_train.pkl")
+# #             except Exception as e:
+# #                 print(f"[錯誤] 載入 {group_name}_train.pkl 時失敗：{e}")
+
+# def preload_blurred_data():
+#     groups = ['g0', 'g1', 'g2', 'g3']
+#     for group in groups:
+#         cached_blurred_data[group] = {}
+#         for speed in range(1, 21):
+#             path = os.path.join("cifar_noniid_blurred", group, f"speed{speed:02d}_train.pkl")
+#             if os.path.exists(path):
+#                 try:
+#                     with open(path, "rb") as f:
+#                         cached_blurred_data[group][speed] = pickle.load(f)
+#                         print(f"載入：{group} speed={speed}")
+#                 except Exception as e:
+#                     print(f"[錯誤] 無法載入 {path}：{e}")
+
+
+# def load_vehicle_data(group_name, max_speed):
+#     speed_int = int(round(max(1, min(20, max_speed))))
+#     try:
+#         return cached_blurred_data[group_name][speed_int]
+#     except KeyError:
+#         raise FileNotFoundError(f"[cache miss] {group_name} @ speed={speed_int} 尚未載入")
+
+
+
+# # def get_data_for_vehicle(road_id):
+# #     # 解析成真正的入口節點名稱
+# #     try:
+# #         node = '_'.join(road_id.split('_')[:3])
+# #     except:
+# #         return None
+
+# #     mapping = {
+# #         'n_1_5': 'g0', 'n_3_5': 'g1', 'n_5_5': 'g2',
+# #         'n_1_3': 'g3', 'n_3_3': 'g4', 'n_5_3': 'g5',
+# #         'n_1_1': 'g6', 'n_3_1': 'g7', 'n_5_1': 'g8'
+# #     }
+# #     group = mapping.get(node)
+# #     if group:
+# #         simple_node = node.replace('_', '')
+# #         print(f"車輛從 {simple_node} 進入 → 分配資料集 {group}")
+# #         return cached_node_data.get(group)
+# #     return None
+
+# def get_entry_node_from_edge(edge_id):
+#     """
+#     根據 edge_id 取得 from node。
+#     例如：'n_5_5_n_5_6' → 'n_5_5'
+#     """
+#     try:
+#         return '_'.join(edge_id.split('_')[:3])
+#     except Exception as e:
+#         print(f"[錯誤] edge_id 解析失敗：{edge_id}, error: {e}")
+#         return None
+
+# def log(global_clock, message):
+#     """用 GlobalClock 時間標記訊息，同時寫入 env.log"""
+#     try:
+#         timestamp = f"[GlobalClock] {global_clock.get_time():.1f}s"
+#     except:
+#         timestamp = "[GlobalClock] ??s"
+    
+#     full_msg = f"{timestamp} - {message}"
+#     print(full_msg,flush=True)
+
+#     # 寫入 env.log
+#     with open("env.log", "a") as f:
+#         f.write(full_msg + "\n")
+#         f.flush()
+
+
+
+# if __name__ == '__main__':
+#     mp.set_start_method('spawn', force=True)
+#     if os.path.exists("env.log"):
+#         os.remove("env.log")
+#     veh_log_path = os.path.join("veh", "veh.log")
+#     if os.path.exists(veh_log_path):
+#         os.remove(veh_log_path)
+#     traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
+#     pre_step = 0
+#     step = 0
+#     real_time_step = 1.0
+#     # preload_node_data()
+#     preload_blurred_data()
+#     global_clock = GlobalClock()
+#     global_clock.start()  # 啟動全域時鐘
+    
+#     global_server = GlobalServer(global_data_path=DATA_PATH, 
+#                                  total_edge_servers=4,
+#                                  upload_due_to_position=upload_due_to_position, 
+#                                  upload_due_to_early_stop=upload_due_to_early_stop, 
+#                                  upload_due_to_global_timeout=upload_due_to_global_timeout,
+#                                  T=120, global_clock = global_clock)
+#     # 定義 Edge Servers
+#     edge_servers = init_edge_servers(cached_blurred_data,DATA_PATH, 
+#                                     active_training_threads, 
+#                                     global_server, global_clock, 
+#                                     upload_due_to_position,
+#                                     upload_due_to_early_stop,
+#                                     upload_due_to_global_timeout)
+
+        
+#     real_time_step = 1.0
+        
+#     sim_thread = SimulationThread(step_limit=18000, real_time_step=1.0)
+#     sim_thread.start()
+    
+#     global_server.start()
+    
+#     for server in edge_servers.values():
+#         server.start()
+    
+#     if os.path.exists("logs/train_stats.csv"):
+#         os.remove("logs/train_stats.csv")
+ 
+#     while sim_thread.step < 18000:
+#         sim_thread.step_event.wait()     # 等待模擬 step 結束
+#         sim_thread.step_event.clear()    # 重置事件（準備下次等待）
+#         start_time = time.time()
+        
+#         vehicle_ids = traci.vehicle.getIDList()
+
+#         # 紀錄目前存在的車輛 ID
+#         existing_vehicles = set(vehicle_ids)
+        
+#         for vid in vehicle_ids:
+#             try:
+#                 if vid not in active_training_threads:
+#                     route = traci.vehicle.getRoute(vid)
+#                     if not route:
+#                         continue  # 確保有 route 再繼續
+#                     start_node = get_entry_node_from_edge(route[0])
+#                     # data_for_vehicle = get_data_for_vehicle(start_node)
+                    
+#                     group = entry_to_group.get(start_node, None)
+#                     if group is None:
+#                         log(global_clock, f"[警告] 未知 entry node {start_node}，預設為 g0")
+#                         group = 'g0'
+                        
+#                     max_speed = traci.vehicle.getMaxSpeed(vid)
+#                     compute_power = random.randint(1, 4)
+#                     route_length = len(route)
+                    
+#                     # # 計算目前剩餘邊數（route 邊數 - 已經走過的 index）
+#                     # try:
+#                     #     index = traci.vehicle.getRouteIndex(vid)
+#                     #     remaining_steps = len(route) - index
+#                     # except Exception as e:
+#                     #     remaining_steps = -1  # 若無法取得，設為 -1
+#                     #     log(global_clock, f"[錯誤] 無法取得 {vid} 剩餘邊數：{e}")
+                    
+#                     try:
+#                         data_for_vehicle = load_vehicle_data(group, max_speed)
+#                     except Exception as e:
+#                         log(global_clock, f"[錯誤] 無法載入 {group} 的模糊版資料（速度 {max_speed:.1f}）→ {e}")
+#                         continue
+
+#                     active_training_threads[vid] = {
+#                         "entry_node": start_node,
+#                         "trainer": None,
+#                         "data_group": group,
+#                         "max_speed": max_speed,
+#                         "compute_power": compute_power,
+#                         "route_length": route_length,
+#                         "data": data_for_vehicle
+#                         # "train_count": 0 
+#                     }
+#                     compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
+#                     assigned = active_training_threads[vid]['data_group']
+#                     # log(global_clock,f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，分配到資料 {assigned}")
+#                     log(global_clock,
+#                         f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，"
+#                         f"data={assigned}，速度={max_speed}，能力={compute_power}，，路徑長度={route_length}")
+
+
+#             except traci.exceptions.TraCIException:
+#                 log(global_clock,f"[錯誤] 無法取得車輛 {vid} 的位置")
+#                 continue
+#             except Exception as e:
+#                 log(global_clock,f"[未知錯誤] 處理車輛 {vid} 時發生例外：{e}")
+#                 continue
+#         # ----------------------------
+#         # 移除已離開的車輛（try 保護版本）
+#         # ----------------------------
+#         for vid in list(active_training_threads.keys()):
+#             try:
+#                 if vid not in existing_vehicles:
+#                     log(global_clock,f"車輛 {vid} 離開模擬環境，移除 active_training_threads。")
+
+#                     vehicle_info = active_training_threads.pop(vid, None)
+
+#                     if vehicle_info:
+#                         if 'trainer' in vehicle_info and vehicle_info['trainer'] is not None:
+#                             vehicle_info['trainer'].stop()
+#                             vehicle_info['trainer'].join()
+
+#                         if 'data' in vehicle_info:
+#                             del vehicle_info['data']
+
+#                     torch.cuda.empty_cache()
+#             except Exception as e:
+#                 log(global_clock,f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
+                
+#     print(f"共 {upload_due_to_position['count']} 輛車是因為提前結束訓練上傳模型（非 loss 達標）。")          
+#     sim_thread.join()
+#     traci.close()
+
+
+
 import traci
 import time
 import os
 import pickle
 import torch
-from models.resnet import SmallResNet
+# from models.resnet import SmallResNet
 from train_utils import train_model
 from server_definition import EdgeServer
 from global_server import GlobalServer
@@ -14,43 +277,11 @@ import matplotlib
 matplotlib.use('Agg')  # 使用非 GUI 的 backend（不要 Tkinter / TkAgg）
 import matplotlib.pyplot as plt
 import random
+import multiprocessing as mp
+from multiprocessing import Manager
 
 
-
-SUMO_BINARY = 'sumo'
-CONFIG_FILE = 'grid7x7.sumocfg'
-DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
-
-active_training_threads = {}  # 在這裡初始化 active_training_threads
-# cached_node_data = {}
-cached_blurred_data = {}  # cached_blurred_data[group][speed] = data_dict
-upload_due_to_position = {'count':0}
-upload_due_to_early_stop = {'count': 0}
-upload_due_to_global_timeout = {'count': 0}
-
-
-
-entry_to_group = {
-    'n_0_1': 'g0', 'n_0_2': 'g0', 'n_0_3': 'g0', 'n_0_4': 'g0', 'n_0_5': 'g0',
-    'n_1_6': 'g1', 'n_2_6': 'g1', 'n_3_6': 'g1', 'n_4_6': 'g1', 'n_5_6': 'g1',
-    'n_6_1': 'g2', 'n_6_2': 'g2', 'n_6_3': 'g2', 'n_6_4': 'g2', 'n_6_5': 'g2',
-    'n_1_0': 'g3', 'n_2_0': 'g3', 'n_3_0': 'g3', 'n_4_0': 'g3', 'n_5_0': 'g3',
-}
-
-
-# def preload_node_data():
-#     group_names = [f'g{i}' for i in range(4)]
-#     for group_name in group_names:
-#         file_path = os.path.join(DATA_PATH, f'{group_name}_train.pkl')
-#         if os.path.exists(file_path):
-#             try:
-#                 with open(file_path, 'rb') as f:
-#                     cached_node_data[group_name] = pickle.load(f)
-#                     print(f"預載成功：{group_name}_train.pkl")
-#             except Exception as e:
-#                 print(f"[錯誤] 載入 {group_name}_train.pkl 時失敗：{e}")
-
-def preload_blurred_data():
+def preload_blurred_data(cached_blurred_data):
     groups = ['g0', 'g1', 'g2', 'g3']
     for group in groups:
         cached_blurred_data[group] = {}
@@ -64,40 +295,14 @@ def preload_blurred_data():
                 except Exception as e:
                     print(f"[錯誤] 無法載入 {path}：{e}")
 
-
-def load_vehicle_data(group_name, max_speed):
+def load_vehicle_data(cached_blurred_data, group_name, max_speed):
     speed_int = int(round(max(1, min(20, max_speed))))
     try:
         return cached_blurred_data[group_name][speed_int]
     except KeyError:
         raise FileNotFoundError(f"[cache miss] {group_name} @ speed={speed_int} 尚未載入")
 
-
-
-# def get_data_for_vehicle(road_id):
-#     # 解析成真正的入口節點名稱
-#     try:
-#         node = '_'.join(road_id.split('_')[:3])
-#     except:
-#         return None
-
-#     mapping = {
-#         'n_1_5': 'g0', 'n_3_5': 'g1', 'n_5_5': 'g2',
-#         'n_1_3': 'g3', 'n_3_3': 'g4', 'n_5_3': 'g5',
-#         'n_1_1': 'g6', 'n_3_1': 'g7', 'n_5_1': 'g8'
-#     }
-#     group = mapping.get(node)
-#     if group:
-#         simple_node = node.replace('_', '')
-#         print(f"車輛從 {simple_node} 進入 → 分配資料集 {group}")
-#         return cached_node_data.get(group)
-#     return None
-
 def get_entry_node_from_edge(edge_id):
-    """
-    根據 edge_id 取得 from node。
-    例如：'n_5_5_n_5_6' → 'n_5_5'
-    """
     try:
         return '_'.join(edge_id.split('_')[:3])
     except Exception as e:
@@ -105,107 +310,110 @@ def get_entry_node_from_edge(edge_id):
         return None
 
 def log(global_clock, message):
-    """用 GlobalClock 時間標記訊息，同時寫入 env.log"""
     try:
         timestamp = f"[GlobalClock] {global_clock.get_time():.1f}s"
     except:
         timestamp = "[GlobalClock] ??s"
-    
     full_msg = f"{timestamp} - {message}"
-    print(full_msg,flush=True)
-
-    # 寫入 env.log
+    print(full_msg, flush=True)
     with open("env.log", "a") as f:
         f.write(full_msg + "\n")
         f.flush()
 
+def main():
+    manager = Manager()
+    SUMO_BINARY = 'sumo'
+    CONFIG_FILE = 'grid7x7.sumocfg'
+    DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
+
+    active_training_threads = {}
+    cached_blurred_data = {}
+    upload_due_to_position = manager.dict({'count': 0})
+    upload_due_to_early_stop = manager.dict({'count': 0})
+    upload_due_to_global_timeout = manager.dict({'count': 0})
+    vehicle_position_status = manager.dict()
+    vehicle_current_edge = Manager().dict()
+    vehicle_exit_edge = manager.dict()
 
 
-if __name__ == '__main__':
+
+    entry_to_group = {
+        'n_0_1': 'g0', 'n_0_2': 'g0', 'n_0_3': 'g0', 'n_0_4': 'g0', 'n_0_5': 'g0',
+        'n_1_6': 'g1', 'n_2_6': 'g1', 'n_3_6': 'g1', 'n_4_6': 'g1', 'n_5_6': 'g1',
+        'n_6_1': 'g2', 'n_6_2': 'g2', 'n_6_3': 'g2', 'n_6_4': 'g2', 'n_6_5': 'g2',
+        'n_1_0': 'g3', 'n_2_0': 'g3', 'n_3_0': 'g3', 'n_4_0': 'g3', 'n_5_0': 'g3',
+    }
+
     if os.path.exists("env.log"):
         os.remove("env.log")
     veh_log_path = os.path.join("veh", "veh.log")
     if os.path.exists(veh_log_path):
         os.remove(veh_log_path)
+    if os.path.exists("uploads"):
+        for f in os.listdir("uploads"):
+            os.remove(os.path.join("uploads", f))
+    else:
+        os.makedirs("uploads", exist_ok=True)
+
     traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
-    pre_step = 0
-    step = 0
-    real_time_step = 1.0
-    # preload_node_data()
-    preload_blurred_data()
+    preload_blurred_data(cached_blurred_data)
     global_clock = GlobalClock()
-    global_clock.start()  # 啟動全域時鐘
-    
+    global_clock.start()
+
     global_server = GlobalServer(global_data_path=DATA_PATH, 
                                  total_edge_servers=4,
                                  upload_due_to_position=upload_due_to_position, 
                                  upload_due_to_early_stop=upload_due_to_early_stop, 
                                  upload_due_to_global_timeout=upload_due_to_global_timeout,
-                                 T=120, global_clock = global_clock)
-    # 定義 Edge Servers
-    edge_servers = init_edge_servers(cached_blurred_data,DATA_PATH, 
-                                    active_training_threads, 
-                                    global_server, global_clock, 
-                                    upload_due_to_position,
-                                    upload_due_to_early_stop,
-                                    upload_due_to_global_timeout)
+                                 T=120, global_clock=global_clock)
 
-        
-    real_time_step = 1.0
-        
+    edge_servers = init_edge_servers(cached_blurred_data, 
+                                     DATA_PATH, 
+                                     active_training_threads, 
+                                     global_server, 
+                                     global_clock, 
+                                     upload_due_to_position, 
+                                     upload_due_to_early_stop, 
+                                     upload_due_to_global_timeout,
+                                     vehicle_position_status,
+                                     vehicle_current_edge,
+                                     vehicle_exit_edge)
+
+    global_server.edge_server_map = edge_servers
+
     sim_thread = SimulationThread(step_limit=18000, real_time_step=1.0)
     sim_thread.start()
-    
     global_server.start()
-    
     for server in edge_servers.values():
         server.start()
-    
+
     if os.path.exists("logs/train_stats.csv"):
         os.remove("logs/train_stats.csv")
- 
-    while sim_thread.step < 18000:
-        sim_thread.step_event.wait()     # 等待模擬 step 結束
-        sim_thread.step_event.clear()    # 重置事件（準備下次等待）
-        start_time = time.time()
-        
-        vehicle_ids = traci.vehicle.getIDList()
 
-        # 紀錄目前存在的車輛 ID
+    while sim_thread.step < 18000:
+        sim_thread.step_event.wait()
+        sim_thread.step_event.clear()
+        vehicle_ids = traci.vehicle.getIDList()
         existing_vehicles = set(vehicle_ids)
-        
+
+
         for vid in vehicle_ids:
             try:
                 if vid not in active_training_threads:
                     route = traci.vehicle.getRoute(vid)
                     if not route:
-                        continue  # 確保有 route 再繼續
+                        continue
                     start_node = get_entry_node_from_edge(route[0])
-                    # data_for_vehicle = get_data_for_vehicle(start_node)
-                    
-                    group = entry_to_group.get(start_node, None)
-                    if group is None:
-                        log(global_clock, f"[警告] 未知 entry node {start_node}，預設為 g0")
-                        group = 'g0'
-                        
+                    group = entry_to_group.get(start_node, 'g0')
                     max_speed = traci.vehicle.getMaxSpeed(vid)
                     compute_power = random.randint(1, 4)
                     route_length = len(route)
-                    
-                    # # 計算目前剩餘邊數（route 邊數 - 已經走過的 index）
-                    # try:
-                    #     index = traci.vehicle.getRouteIndex(vid)
-                    #     remaining_steps = len(route) - index
-                    # except Exception as e:
-                    #     remaining_steps = -1  # 若無法取得，設為 -1
-                    #     log(global_clock, f"[錯誤] 無法取得 {vid} 剩餘邊數：{e}")
-                    
+                    route_index = traci.vehicle.getRouteIndex(vid)
                     try:
-                        data_for_vehicle = load_vehicle_data(group, max_speed)
+                        data_for_vehicle = load_vehicle_data(cached_blurred_data, group, max_speed)
                     except Exception as e:
                         log(global_clock, f"[錯誤] 無法載入 {group} 的模糊版資料（速度 {max_speed:.1f}）→ {e}")
                         continue
-
                     active_training_threads[vid] = {
                         "entry_node": start_node,
                         "trainer": None,
@@ -214,45 +422,59 @@ if __name__ == '__main__':
                         "compute_power": compute_power,
                         "route_length": route_length,
                         "data": data_for_vehicle
-                        # "train_count": 0 
+                        # "exit_edge": route[-1] if route else None
                     }
-                    compact_id = start_node.replace('_', '')  # 把 n_3_5_n_2_5 變成 n35n25
-                    assigned = active_training_threads[vid]['data_group']
-                    # log(global_clock,f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，分配到資料 {assigned}")
+                    exit_edge = route[-1] if route else None
+                    vehicle_exit_edge[vid] = exit_edge
+
+                    vehicle_position_status[vid] = (route_index, route_length)
+                    compact_id = start_node.replace('_', '')
                     log(global_clock,
                         f"車輛 {vid} 成功從 {compact_id} 產生並加入 active_training_threads，"
-                        f"data={assigned}，速度={max_speed}，能力={compute_power}，，路徑長度={route_length}")
+                        f"data={group}，速度={max_speed}，能力={compute_power}，路徑長度={route_length}")
+                else:
+                    # 每秒更新一次目前位置 index
+                    route_index = traci.vehicle.getRouteIndex(vid)
+                    route_length = len(traci.vehicle.getRoute(vid))
+                    vehicle_position_status[vid] = (route_index, route_length)
+                    # try:
+                    #     current_edge = traci.vehicle.getRoadID(vid)
+                    #     active_training_threads[vid]["current_edge"] = current_edge
+                    # except traci.exceptions.TraCIException:
+                    #     active_training_threads[vid]["current_edge"] = None
+                    try:
+                        current_edge = traci.vehicle.getRoadID(vid)
+                        vehicle_current_edge[vid] = current_edge  # 更新共享記憶體版本
+                    except traci.exceptions.TraCIException:
+                        vehicle_current_edge[vid] = None
 
-
+                    
             except traci.exceptions.TraCIException:
-                log(global_clock,f"[錯誤] 無法取得車輛 {vid} 的位置")
+                log(global_clock, f"[錯誤] 無法取得車輛 {vid} 的位置")
                 continue
             except Exception as e:
-                log(global_clock,f"[未知錯誤] 處理車輛 {vid} 時發生例外：{e}")
+                log(global_clock, f"[未知錯誤] 處理車輛 {vid} 時發生例外：{e}")
                 continue
-        # ----------------------------
-        # 移除已離開的車輛（try 保護版本）
-        # ----------------------------
+
         for vid in list(active_training_threads.keys()):
             try:
                 if vid not in existing_vehicles:
-                    log(global_clock,f"車輛 {vid} 離開模擬環境，移除 active_training_threads。")
-
+                    log(global_clock, f"車輛 {vid} 離開模擬環境，移除 active_training_threads。")
                     vehicle_info = active_training_threads.pop(vid, None)
-
                     if vehicle_info:
                         if 'trainer' in vehicle_info and vehicle_info['trainer'] is not None:
                             vehicle_info['trainer'].stop()
                             vehicle_info['trainer'].join()
-
                         if 'data' in vehicle_info:
                             del vehicle_info['data']
-
                     torch.cuda.empty_cache()
             except Exception as e:
-                log(global_clock,f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
-                
-    print(f"共 {upload_due_to_position['count']} 輛車是因為提前結束訓練上傳模型（非 loss 達標）。")          
+                log(global_clock, f"[錯誤] 移除車輛 {vid} 時發生例外：{e}")
+
+    print(f"共 {upload_due_to_position['count']} 輛車是因為提前結束訓練上傳模型（非 loss 達標）。")
     sim_thread.join()
     traci.close()
 
+if __name__ == '__main__':
+    mp.set_start_method('spawn', force=True)
+    main()

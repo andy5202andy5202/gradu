@@ -1,11 +1,15 @@
 from server_definition import EdgeServer
 
+
 def init_edge_servers(cached_node_data, DATA_PATH, 
                       active_training_threads, 
                       global_server, global_clock, 
                       upload_due_to_position,
                       upload_due_to_early_stop,
-                      upload_due_to_global_timeout_counter):
+                      upload_due_to_global_timeout_counter,
+                      vehicle_position_status,
+                      vehicle_current_edge,
+                      vehicle_exit_edge):
     Edge0 = EdgeServer('Edge0', covered_edges={
         'n_0_3_n_0_4','n_0_4_n_0_3','n_0_4_n_0_5','n_0_5_n_0_4','n_0_5_n_0_6','n_0_6_n_0_5',
         'n_0_6_n_1_6','n_1_6_n_0_6','n_1_6_n_2_6','n_2_6_n_1_6','n_2_6_n_3_6','n_3_6_n_2_6',
@@ -21,7 +25,10 @@ def init_edge_servers(cached_node_data, DATA_PATH,
         global_clock=global_clock, 
         upload_due_to_position=upload_due_to_position,
         upload_due_to_early_stop=upload_due_to_early_stop,
-        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter)
+        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter,
+        position_status_dict=vehicle_position_status,
+        vehicle_current_edge=vehicle_current_edge,
+        vehicle_exit_edge=vehicle_exit_edge)
 
     Edge1 = EdgeServer('Edge1', covered_edges={
         'n_3_5_n_3_6','n_3_4_n_3_5','n_3_3_n_3_4',
@@ -38,7 +45,10 @@ def init_edge_servers(cached_node_data, DATA_PATH,
         global_clock=global_clock, 
         upload_due_to_position=upload_due_to_position,
         upload_due_to_early_stop=upload_due_to_early_stop,
-        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter)
+        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter,
+        position_status_dict=vehicle_position_status,
+        vehicle_current_edge=vehicle_current_edge,
+        vehicle_exit_edge=vehicle_exit_edge)
 
     Edge2 = EdgeServer('Edge2', covered_edges={
         'n_0_3_n_1_3','n_1_3_n_2_3','n_2_3_n_3_3',
@@ -55,7 +65,10 @@ def init_edge_servers(cached_node_data, DATA_PATH,
         global_clock=global_clock, 
         upload_due_to_position=upload_due_to_position,
         upload_due_to_early_stop=upload_due_to_early_stop,
-        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter)
+        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter,
+        position_status_dict=vehicle_position_status,
+        vehicle_current_edge=vehicle_current_edge,
+        vehicle_exit_edge=vehicle_exit_edge)
 
     Edge3 = EdgeServer('Edge3', covered_edges={
         'n_3_0_n_3_1','n_3_1_n_3_2','n_3_2_n_3_3',
@@ -72,7 +85,10 @@ def init_edge_servers(cached_node_data, DATA_PATH,
         global_clock=global_clock, 
         upload_due_to_position=upload_due_to_position,
         upload_due_to_early_stop=upload_due_to_early_stop,
-        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter)
+        upload_due_to_global_timeout_counter=upload_due_to_global_timeout_counter,
+        position_status_dict=vehicle_position_status,
+        vehicle_current_edge=vehicle_current_edge,
+        vehicle_exit_edge=vehicle_exit_edge)
 
     return {
         'Edge0': Edge0,
@@ -80,6 +96,7 @@ def init_edge_servers(cached_node_data, DATA_PATH,
         'Edge2': Edge2,
         'Edge3': Edge3,
     }
+
 
 
 

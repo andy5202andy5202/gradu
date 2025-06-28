@@ -257,7 +257,7 @@ class GlobalServer(threading.Thread):
             plt.figure(figsize=(12, 6))
             sns.heatmap(
                 df.T,
-                annot=True,
+                annot=False,
                 fmt=".1f",
                 cmap="YlGnBu",
                 vmin=0,
@@ -290,7 +290,7 @@ class GlobalServer(threading.Thread):
 
         except Exception as e:
             self.logger.error(f"Heatmap 繪圖失敗：{str(e)}")
-
+    
     def run(self):
         try:
             while True:
@@ -344,8 +344,8 @@ class GlobalServer(threading.Thread):
                 self.per_class_accuracy_log.append(per_class_accuracy)
                 self.save_per_class_accuracy_heatmap()
                 
-                self.model_version += 1
-                self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
+                # self.model_version += 1
+                # self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
                 self.position_upload_history.append(self.upload_due_to_position['count'])
                 self.logger.info(f"第 {self.model_version} 輪：{self.position_upload_history[-1]} 輛車是因為 position 而上傳")
                 self.upload_due_to_position['count'] = 0  # 重置統計器
@@ -359,6 +359,7 @@ class GlobalServer(threading.Thread):
                 self.logger.info(f"第 {self.model_version} 輪：{self.discarded_model_uploads_this_round} 個模型因版本落後被棄用，上傳失敗")
                 self.logger.info(f"目前累積棄用模型總數：{self.discarded_model_upload_total}")
                 self.discarded_model_uploads_this_round = 0
+                
 
 
 
@@ -366,6 +367,11 @@ class GlobalServer(threading.Thread):
                 self.accuracy_history.append(accuracy)
                 self.save_training_plot()
                 self.save_upload_reason_plot()
+                
+                self.write_metrics_to_csv(base_name="test1")  # 改名字
+                self.model_version += 1
+                self.logger.info(f"Global Server 更新模型版本為 {self.model_version}")
+
 
                 if accuracy >= 85.0:
                     try:
@@ -380,3 +386,38 @@ class GlobalServer(threading.Thread):
             self.logger.info("Global Server 儲存 Loss/Accuracy 曲線圖...")
             self.save_training_plot()
 
+    def write_metrics_to_csv(self, base_name):
+        logs_root = "logs"  # 根資料夾
+        rounds = list(range(1, self.model_version + 1))
+
+        def save_to_csv(subfolder, filename, data_dict):
+            output_dir = os.path.join(logs_root, subfolder)
+            os.makedirs(output_dir, exist_ok=True)
+            pd.DataFrame(data_dict).to_csv(os.path.join(output_dir, filename), index=False)
+
+        # 1. Loss
+        save_to_csv("loss", f"{base_name}_loss.csv", {"round": rounds, "loss": self.loss_history})
+
+        # 2. Accuracy
+        save_to_csv("accuracy", f"{base_name}_accuracy.csv", {"round": rounds, "accuracy": self.accuracy_history})
+
+        # 3. Upload reasons
+        upload_reasons = {
+            "position": self.position_upload_history,
+            "early_stop": self.early_stop_upload_history,
+            "timeout": self.global_timeout_upload_history,
+            "discarded": self.discarded_model_upload_history
+        }
+        for reason, data in upload_reasons.items():
+            save_to_csv(reason, f"{base_name}_{reason}.csv", {"round": rounds, "value": data})
+
+        # 4. Per-class accuracy（long format）
+        rows = []
+        for r, acc_dict in enumerate(self.per_class_accuracy_log, start=1):
+            for label in range(10):  # CIFAR-10
+                rows.append({
+                    "round": r,
+                    "label": label,
+                    "accuracy": acc_dict.get(label, 0.0)
+                })
+        save_to_csv("per_class_accuracy", f"{base_name}_per_class_accuracy.csv", rows)

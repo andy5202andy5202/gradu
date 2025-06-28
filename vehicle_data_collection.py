@@ -381,7 +381,8 @@ def main():
 
     global_server.edge_server_map = edge_servers
 
-    sim_thread = SimulationThread(step_limit=18000, real_time_step=1.0)
+    # simu time length 
+    sim_thread = SimulationThread(step_limit=7200, real_time_step=1.0)
     sim_thread.start()
     global_server.start()
     for server in edge_servers.values():
@@ -390,7 +391,8 @@ def main():
     if os.path.exists("logs/train_stats.csv"):
         os.remove("logs/train_stats.csv")
 
-    while sim_thread.step < 18000:
+    # simu time length setting
+    while sim_thread.step < 7200:
         sim_thread.step_event.wait()
         sim_thread.step_event.clear()
         vehicle_ids = traci.vehicle.getIDList()

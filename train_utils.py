@@ -142,7 +142,7 @@ def aggregate_models(models, self):
         Ke_list = [m[1] for m in models]
         weight_sum = sum(Ke_list)
         weights = [k / weight_sum for k in Ke_list]
-        alpha = 0.1
+        alpha = 1
         old_state_dict = self.model.state_dict()
 
         self.logger.info(
@@ -202,7 +202,7 @@ def aggregate_models(models, self):
         weights = [w / weight_sum for w in raw_weights]
 
         
-        alpha = 1  # Edge Server 的平滑係數
+        alpha = 0.1  # Edge Server 的平滑係數
         
         self.logger.info(
             f"{self.server_id} 使用 label-aware + staleness 聚合 + α({alpha}) 平滑：\n"

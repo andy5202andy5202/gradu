@@ -131,7 +131,7 @@ class EdgeServer(threading.Thread):
         return self.model.state_dict(), self.model_version
     
     
-    def update_model(self, new_state_dict, new_version, alpha=0.3):
+    def update_model(self, new_state_dict, new_version, alpha=0.7):
         """
         Edge Server 對 Global Server 傳下來的模型進行 momentum 融合更新。
         θ_edge ← (1 - α) * θ_edge + α * θ_global

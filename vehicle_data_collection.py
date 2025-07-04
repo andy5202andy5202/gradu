@@ -295,6 +295,8 @@ def preload_blurred_data(cached_blurred_data):
                 except Exception as e:
                     print(f"[錯誤] 無法載入 {path}：{e}")
 
+
+
 def load_vehicle_data(cached_blurred_data, group_name, max_speed):
     speed_int = int(round(max(1, min(20, max_speed))))
     try:

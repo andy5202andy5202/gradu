@@ -1,4 +1,4 @@
-from server_definition import EdgeServer
+from server_definition_rl import EdgeServer
 
 
 def init_edge_servers(cached_node_data, DATA_PATH, 

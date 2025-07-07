@@ -35,10 +35,22 @@ class SimulationThread(threading.Thread):
 
         print("[SimulationThread] 結束 SUMO 模擬。")
         self.running = False
-        traci.close()
+        # traci.close()
+        try:
+            traci.close()
+        except:
+            pass
 
     def stop(self):
         self.running = False
+
+    def cleanup(self):
+        try:
+            traci.close()
+        except traci.exceptions.FatalTraCIError:
+            pass
+        except Exception as e:
+            print(f"[SimulationThread] traci.close() 發生錯誤: {e}")
 
 
 

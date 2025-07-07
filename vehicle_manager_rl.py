@@ -101,7 +101,7 @@ def vehicle_manager_loop(sim_thread, active_training_threads, cached_blurred_dat
                         "data_group": group,
                         "max_speed": max_speed,
                         "compute_power": compute_power,
-                        "route_length": route_length,
+                        "remaining_steps": route_length,
                         "data": data_for_vehicle
                     }
                     exit_edge = route[-1] if route else None
@@ -140,6 +140,12 @@ def vehicle_manager_loop(sim_thread, active_training_threads, cached_blurred_dat
 
     
 def init_environment():
+    try:
+        if traci.isLoaded():
+            print("[Init] traci 已啟動，關閉舊連線")
+            traci.close()
+    except:
+        pass
     manager = Manager()
     SUMO_BINARY = 'sumo'
     CONFIG_FILE = 'grid7x7.sumocfg'
@@ -191,20 +197,23 @@ def init_environment():
     sim_thread = SimulationThread(step_limit=7200, real_time_step=1.0)
     sim_thread.start()
     
-    threading.Thread(
+    vehicle_thread = threading.Thread(
         target=vehicle_manager_loop,
         args=(sim_thread, active_training_threads, cached_blurred_data,
             upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
             vehicle_position_status, vehicle_current_edge, vehicle_exit_edge,
             global_clock),
         daemon=True
-    ).start()
+    )
+    
+    vehicle_thread.start()
 
     return {
         "global_server": global_server,
         "edge_servers": [edge_servers[f"Edge{i}"] for i in range(4)],
         "global_clock": global_clock,
-        "sim_thread": sim_thread
+        "sim_thread": sim_thread,
+        "vehicle_thread": vehicle_thread
     }
 
 

@@ -15,6 +15,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
+import torch.nn as nn
+import copy
 
 
 
@@ -26,6 +28,7 @@ class GlobalServer(threading.Thread):
                  upload_due_to_global_timeout,
                  T=120, device='cuda', global_clock=None):
         super().__init__(daemon=True)
+        self.running = True
         self.T = T
         self.device = device
         self.global_clock = global_clock
@@ -127,6 +130,9 @@ class GlobalServer(threading.Thread):
             sample_param = list(self.model.state_dict().items())[0]  # 隨便選一個參數
             param_name, param_value = sample_param
             self.logger.info(f"模型參數檢查 - {param_name}: 平均值 = {param_value.mean().item()}, 標準差 = {param_value.std().item()}")
+    
+    def stop(self):
+        self.running = False
     
     def save_training_plot(self):
         rounds = range(1, len(self.loss_history) + 1)
@@ -290,10 +296,31 @@ class GlobalServer(threading.Thread):
 
         except Exception as e:
             self.logger.error(f"Heatmap 繪圖失敗：{str(e)}")
+            
+    def get_per_edge_loss(self):
+        """
+        回傳每個 EdgeServer 的 loss，用 global dataset 計算
+        若模型不存在或資料集為空，則回傳預設值 1.0
+        """
+        loss_list = []
+        criterion = nn.CrossEntropyLoss()
+
+        for edge_id in sorted(self.edge_server_map.keys()):  # 確保順序固定
+            edge = self.edge_server_map[edge_id]
+            try:
+                dataloader = create_dataloader(self.global_data, batch_size=32)
+                model_on_device = copy.deepcopy(edge.model).to(self.device)
+                loss, _, _ = calculate_loss_and_accuracy(model_on_device, dataloader, criterion, device=self.device)
+                loss_list.append(loss)
+            except Exception as e:
+                self.logger.warning(f"GlobalServer 無法計算 {edge_id} 的 loss：{e}")
+                loss_list.append(1.0)  # fallback 預設值
+
+        return loss_list
     
     def run(self):
         try:
-            while True:
+            while self.running:
                 # 等待 T 秒 (正常等待)
                 round_start = self.global_clock.get_time()
                 

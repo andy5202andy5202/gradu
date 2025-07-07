@@ -524,6 +524,7 @@ class VehicleTrainer(Process):
                  compute_power, max_speed, remaining_steps,
                  gpu_fraction,
                  position_status_dict,
+                #  pos_info,
                  vehicle_current_edge,  
                  vehicle_exit_edge,
                  device='cuda'):
@@ -557,6 +558,7 @@ class VehicleTrainer(Process):
         self.early_stop_patience = 5
         self.trained = False
         self.position_status_dict = position_status_dict
+        # self.pos_info = pos_info
         # torch.cuda.set_per_process_memory_fraction(0.04, device=0)
         self.vehicle_current_edge = vehicle_current_edge  
         self.vehicle_exit_edge = vehicle_exit_edge 
@@ -624,6 +626,7 @@ class VehicleTrainer(Process):
             global_clock=self.global_clock,
             global_deadline=self.global_deadline,
             delay_scale=self.simulated_delay,
+            # pos_info=self.pos_info
             position_status_dict=self.position_status_dict
         )
         end_time = time.time()

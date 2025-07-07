@@ -53,6 +53,7 @@ class EdgeServer(threading.Thread):
         self.position_status_dict = position_status_dict
         self.vehicle_current_edge = vehicle_current_edge
         self.vehicle_exit_edge = vehicle_exit_edge
+        self.enable_auto_run = False
 
     
     def collect_uploaded_models(self):
@@ -204,192 +205,25 @@ class EdgeServer(threading.Thread):
         except Exception as e:
             self.logger.error(f"[{vehicle_id}] 取得資料錯誤：{e}")
             return None
-
-
-        
-    def run(self):
-        try:
-            while True:
-                round_start = self.global_clock.get_time()  # 換用全局時間
-                global_deadline = round_start + self.global_time
-                total_slots = int(self.global_time / self.waiting_time)
-                
-                for current_slot in range(total_slots):  
-                    expected_slot_start = round_start + current_slot * self.waiting_time
-                    expected_slot_end = expected_slot_start + self.waiting_time
-
-                    # 立即選車
-                    # print(f"[GlobalClock] {self.global_clock.get_time()}s - {self.server_id} Slot {current_slot + 1} 選擇車輛...")
-                    self.logger.info(f"{self.server_id} Slot {current_slot + 1} 選擇車輛...")
-
-                    # 1. 車輛選擇
-                    vehicles_in_area = []
-                    vehicle_infos = []
-                    
-                    active_threads_copy = self.active_training_threads.copy()
-                    for vid, vehicle_info in active_threads_copy.items():
-                        if vehicle_info.get('trainer') is None:  # 還沒開始訓練的車輛
-                            if vid not in traci.vehicle.getIDList():
-                                continue  # 該車輛已離開模擬，不要呼叫 getRoadID
-                            try:
-                                position = traci.vehicle.getRoadID(vid)
-                                if position and position.startswith("n_") and self.is_in_range(position):  # position 是 edge_id
-                                    compute_power = vehicle_info.get('compute_power', -1)
-                                    route_length = vehicle_info.get('route_length', -1)
-                                    
-                                    try:
-                                        route_index = traci.vehicle.getRouteIndex(vid)
-                                        remaining_steps = route_length - route_index
-                                    except Exception as e:
-                                        remaining_steps = -1
-                                        self.logger.warning(f"{self.server_id} 無法取得 {vid} 的 route index：{e}")
-                                    vehicle_info["remaining_steps"] = remaining_steps
-                                    vehicles_in_area.append(vid)
-                                    vehicle_infos.append((vid, compute_power, route_length, remaining_steps))
-                            except Exception as e:
-                                # print(f'取得車輛 {vid} 位置時發生錯誤：{e}')
-                                self.logger.info(f'取得車輛 {vid} 位置時發生錯誤：{e}')
-
-                    # print(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
-                    self.logger.info(f'{self.server_id} 範圍內的車輛: {vehicles_in_area}')
-                    if vehicle_infos:
-                        self.logger.info(f"{self.server_id} 可選車輛資訊如下：")
-                        for vid, cp, rl, rs in vehicle_infos:
-                            self.logger.info(f"{vid} | compute={cp} | route_len={rl} | remain={rs}")
-                    else:
-                        self.logger.info(f"{self.server_id} 此 slot 無可選車輛。")
-
-                    # 隨機選擇最多三輛車來訓練
-                    num_to_select = random.randint(0, len(vehicles_in_area))
-                    # selected_vehicles = random.sample(vehicles_in_area,min(3,len(vehicles_in_area)))
-                    selected_vehicles = random.sample(vehicles_in_area,num_to_select)
-                    # print(f'{self.server_id} 選中的車輛: {selected_vehicles}')
-                    # selected_vehicles = vehicles_in_area  # 全選
-                    self.logger.info(f'{self.server_id} 選中的車輛: {selected_vehicles}')
-                    self.logger.info(f"目前系統 thread 數量: {threading.active_count()}")
-                    
-                    # 2. 啟動選中的車輛進行訓練
-                    
-                    for vid in selected_vehicles:
-                        
-                        if vid not in self.active_training_threads:
-                            self.logger.warning(f"{self.server_id} 車輛 {vid} 在選中後已離開系統，跳過。")
-                            continue
-
-                        vehicle_info = self.active_training_threads[vid]
-                        trainer_obj = vehicle_info.get('trainer')
-
-                        if trainer_obj is not None and trainer_obj.is_alive():
-                            self.logger.warning(f"{self.server_id} 車輛 {vid} 的 trainer 還在跑，跳過這輛車。")
-                            continue
-
-                        if 'data' not in vehicle_info:
-                            data_for_vehicle = self.get_data_for_vehicle(vid)
-                            if data_for_vehicle is None:
-                                self.logger.warning(f"{self.server_id} 車輛 {vid} 找不到對應資料，跳過。")
-                                continue
-                            vehicle_info['data'] = data_for_vehicle
-                            
-                        if not self.training_semaphore.acquire(timeout=1.0):
-                            self.logger.info(f"{self.server_id} 車輛 {vid} 無法取得 GPU slot，略過此次訓練。")
-                            continue
-
-                        self.logger.info(f"{self.server_id} 準備啟動車輛 {vid} 的 trainer 進行訓練")
-
-                        gpu_fraction = 1.0 / 100  #上限調整
-                        try:
-                            
-                            trainer = VehicleTrainer(vehicle_id=vid, 
-                                                    data_for_vehicle=vehicle_info['data'], 
-                                                    edge_server_id=self.server_id, 
-                                                    model_state_dict=copy.deepcopy(self.model.state_dict()),
-                                                    model_version=self.model_version,
-                                                    global_version=self.global_server.model_version,
-                                                    upload_due_to_position_counter=self.upload_due_to_position,
-                                                    upload_due_to_early_stop=self.upload_due_to_early_stop,
-                                                    upload_due_to_global_timeout_counter=self.upload_due_to_global_timeout_counter,
-                                                    global_deadline=global_deadline,
-                                                    global_clock=self.global_clock.time_value,
-                                                    compute_power=vehicle_info['compute_power'],           
-                                                    max_speed=vehicle_info['max_speed'],                   
-                                                    remaining_steps=vehicle_info['remaining_steps'],
-                                                    gpu_fraction=gpu_fraction,
-                                                    position_status_dict=self.position_status_dict,
-                                                    vehicle_current_edge=self.vehicle_current_edge,
-                                                    vehicle_exit_edge=self.vehicle_exit_edge,
     
-                                                    device=self.device)
-                            trainer.start()
-                            self.active_training_threads[vid]['trainer'] = trainer
-                            self.logger.info(f"{self.server_id} 車輛 {vid} 的 trainer 訓練已啟動")
-                            
-                            def release_after_done():
-                                trainer.join()
-                                self.training_semaphore.release()
-                                self.logger.info(f"{self.server_id} 車輛 {vid} 的 trainer 結束，GPU slot 已釋放")
-                                try:
-                                    if vid in self.active_training_threads:
-                                        self.active_training_threads[vid]['trainer'] = None
-                                        self.logger.info(f"{self.server_id} 車輛 {vid} 標記為可重新訓練")
-                                    else:
-                                        self.logger.info(f"{self.server_id} 車輛 {vid} 已不在 active_training_threads，略過 trainer 重設")
-                                except Exception as e:
-                                    self.logger.warning(f"{self.server_id} 設定 {vid} 為可重訓時發生錯誤：{e}")
-
-                            threading.Thread(target=release_after_done, daemon=True).start()
-
-                        except Exception as e:
-                            self.logger.error(f"{self.server_id} 啟動車輛 {vid} 的 trainer 失敗，錯誤：{str(e)}，跳過這台車。")
-                            self.training_semaphore.release()
-                            continue
-
-                        
-                    while self.global_clock.get_time() < expected_slot_end:
-                        time.sleep(0.1)
-                    
-                    self.collect_uploaded_models()
-                    
-                    with self.received_models_lock:
-                        if self.received_models:
-                            self.logger.info(f"{self.server_id} 正在聚合收到的車輛模型...")
-                            aggregated_state_dict = aggregate_models(self.received_models, self)
-                            filtered_state_dict = {
-                                k: v for k, v in aggregated_state_dict.items()
-                                if k in self.model.state_dict()
-                            }
-                            self.model.load_state_dict(filtered_state_dict)
-                            self.received_models = []  # 清空
-                            self.model_version += 1
-                            self.logger.info(f"{self.server_id} 完成聚合，本地模型版本更新為 {self.model_version}")
-                        else:
-                            self.logger.info(f"{self.server_id} 本輪沒有收到車輛模型，版本不變。")
-                            
+    def run_single_slot(self, action_vector, expected_slot_start, slot_time, global_deadline):
         
-                # 結束後，將模型上傳到 Global Server
-                self.global_server.received_models.append((self.model.state_dict(), self.model_version))
-                # print(f'{self.server_id} 已將本地模型版本 {self.model_version} 上傳給 Global Server')
-                self.logger.info(f'{self.server_id} 已將本地模型版本 {self.model_version} 上傳給 Global Server')
+        expected_slot_end = expected_slot_start + slot_time
+        self.logger.info(f"{self.server_id} slot 預計執行 {slot_time:.1f}s，等待至 GlobalClock={expected_slot_end:.1f}s")
+        # 先找出目前還活著、且可以選的車輛 pool
+        candidate_vehicles = []
+        for vid, info in self.active_training_threads.items():
+            if info.get("trainer") is None:
+                edge_id = self.vehicle_current_edge.get(vid, None)
+                if edge_id is not None and self.is_in_range(edge_id):
+                    candidate_vehicles.append(vid)
 
-
-                # busy waiting 等 Global Server 聚合並更新版本
-                current_version = self.global_server.model_version
-                while self.global_server.model_version <= current_version:
-                    time.sleep(0.1)
-
-                # 收到更新後同步
-                self.update_model(self.global_server.model.state_dict(), self.global_server.model_version)
-                # print(f'{self.server_id} 已更新全局模型為版本 {self.model_version} 從 Global Server')
-                # self.logger.info(f'{self.server_id} 已更新全局模型為版本 {self.model_version} 從 Global Server')
-                self.model_version = 1    
-                   
-        except Exception as e:
-            self.logger.exception(f"[致命錯誤] {self.server_id} run() 發生例外 → {e}")
-    
-    def run_single_slot(self, selected_vehicles, expected_slot_start):
-        expected_slot_end = expected_slot_start + self.waiting_time
+        # 按照 action_vector 選出對應 index 的車
+        selected_vehicles = []
+        for i, bit in enumerate(action_vector):
+            if bit == 1 and i < len(candidate_vehicles):
+                selected_vehicles.append(candidate_vehicles[i])
         self.logger.info(f"{self.server_id} slot 選中的車輛: {selected_vehicles}")
-
-        global_deadline = expected_slot_start + self.global_time
 
         for vid in selected_vehicles:
             if vid not in self.active_training_threads:
@@ -413,6 +247,7 @@ class EdgeServer(threading.Thread):
                 continue
 
             try:
+                pos_dict_copy = dict(self.position_status_dict)
                 trainer = VehicleTrainer(
                     vehicle_id=vid,
                     data_for_vehicle=vehicle_info['data'],
@@ -467,24 +302,39 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f"{self.server_id} 此 slot 無收到模型，版本不變")
                 
     def run_slots(self, num_slots, slot_actions):
+        self.logger.info(f"{self.server_id} 開始執行 run_slots()，slots = {num_slots}")
+
+        if len(slot_actions) < num_slots:
+            self.logger.error(f"{self.server_id} slot_actions 長度不足（{len(slot_actions)} < {num_slots}），結束此輪")
+            return
+        
         round_start = self.global_clock.get_time()
+        slot_time = self.global_time / num_slots
+        global_deadline = round_start + self.global_time
 
         for i in range(num_slots):
-            expected_slot_start = round_start + i * self.waiting_time
-            self.run_single_slot(slot_actions[i], expected_slot_start)
+            
+            expected_slot_start = round_start + i * slot_time
+            
+            while self.global_clock.get_time() < expected_slot_start:
+                time.sleep(0.05)
 
-        # 最後將模型上傳給 Global Server
+            try:
+                self.run_single_slot(slot_actions[i], expected_slot_start, slot_time, global_deadline)
+            except Exception as e:
+                self.logger.error(f"{self.server_id} slot {i} 執行失敗：{e}")
+
         self.global_server.received_models.append((self.model.state_dict(), self.model_version))
         self.logger.info(f"{self.server_id} 已上傳模型 v{self.model_version} 給 Global Server")
 
-        # 等待 Global Server 聚合後發佈新版
         current_version = self.global_server.model_version
         while self.global_server.model_version <= current_version:
             time.sleep(0.1)
 
-        # 拿新版模型
         self.update_model(self.global_server.model.state_dict(), self.global_server.model_version)
+
         self.model_version = 1
+
 
 
 

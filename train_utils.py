@@ -12,6 +12,7 @@ import time
 def train_model(model, train_data, vehicle_id, epochs=10, batch_size=32, learning_rate=0.001,
     device='cuda', loss_threshold=0.001, logger=None, early_stop_patience=5, delay_scale=None
     , global_clock=None, global_deadline=None, position_status_dict=None):
+    
     model.train()
 
     if logger and global_clock and global_deadline:

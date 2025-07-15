@@ -54,6 +54,7 @@ class GlobalServer(threading.Thread):
         self.discarded_model_upload_history = []
         self.discarded_model_upload_total = 0
         self.discarded_model_uploads_this_round = 0
+        self.max_rounds = 100
 
 
 
@@ -331,10 +332,13 @@ class GlobalServer(threading.Thread):
 
                 self.logger.info("Global Server 開始等待所有 Edge Server 的參數上傳...")
 
-                # Busy waiting 等待模型
                 while len(self.received_models) < self.total_edge_servers:
+                    if not self.running:
+                        self.logger.info("Global Server 偵測到停止命令，跳出等待")
+                        return  # or break
                     self.logger.info(f"Global Server 等待中... 已收到 {len(self.received_models)}/{self.total_edge_servers} 個模型")
-                    time.sleep(0.1)
+                    time.sleep(1)
+
 
                 # self.logger.info("Global Server 已收到所有 Edge Server 的參數，開始聚合模型...")
                 
@@ -448,3 +452,20 @@ class GlobalServer(threading.Thread):
                     "accuracy": acc_dict.get(label, 0.0)
                 })
         save_to_csv("per_class_accuracy", f"{base_name}_per_class_accuracy.csv", rows)
+        
+    def get_loss_for_edge(self, edge_id):
+        try:
+            # 取得 edge 的模型
+            edge = self.edge_server_map[edge_id]
+            model = copy.deepcopy(edge.model).to(self.device)
+            
+            # 使用 global dataset 評估 loss
+            dataloader = create_dataloader(self.global_data, batch_size=32)
+            loss, _, _ = calculate_loss_and_accuracy(
+                model, dataloader, torch.nn.CrossEntropyLoss(), device=self.device
+            )
+            return loss
+        except Exception as e:
+            self.logger.warning(f"[get_loss_for_edge] 計算 {edge_id} loss 時發生錯誤: {e}")
+            return 1.0  # fallback 預設值
+

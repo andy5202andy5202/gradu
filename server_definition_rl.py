@@ -13,6 +13,8 @@ from global_server import GlobalServer
 import logging
 import multiprocessing
 from models.resnet import CIFAR_CNN
+from replay_buffer import ReplayBuffer
+
 
 
 class EdgeServer(threading.Thread):
@@ -54,6 +56,17 @@ class EdgeServer(threading.Thread):
         self.vehicle_current_edge = vehicle_current_edge
         self.vehicle_exit_edge = vehicle_exit_edge
         self.enable_auto_run = False
+        self.replay_buffer = ReplayBuffer()
+        self.rl_logger = logging.getLogger(self.server_id + "_rl")
+        self.rl_logger.setLevel(logging.INFO)
+        
+        if self.rl_logger.hasHandlers():
+            self.rl_logger.handlers.clear()
+
+        rl_handler = logging.FileHandler(f"{self.server_id}_rl.log", mode='w', encoding='utf-8')
+        rl_handler.setFormatter(logging.Formatter('%(message)s'))
+        self.rl_logger.addHandler(rl_handler)
+
 
     
     def collect_uploaded_models(self):
@@ -93,7 +106,8 @@ class EdgeServer(threading.Thread):
                     pass
     def get_avg_info(self):
         speeds, computes, remains = [], [], []
-        for vid, info in self.active_training_threads.items():
+        snapshot = list(self.active_training_threads.items())
+        for vid, info in snapshot:
             if info.get("trainer") is None:
                 edge_id = self.vehicle_current_edge.get(vid, None)
                 if edge_id is not None and self.is_in_range(edge_id):
@@ -110,26 +124,25 @@ class EdgeServer(threading.Thread):
 
         return avg_speed / 20, avg_compute / 10, avg_remain / 100
     
-    def get_vehicle_state(self, max_k=8):
+    def get_vehicle_state(self, max_k=8, slot_ratio=1.0, normalized_round=0.0):
         vehicles = []
-        for vid, info in self.active_training_threads.items():
+        snapshot_keys = list(self.active_training_threads.keys())
+        for vid in snapshot_keys:
+            info = self.active_training_threads.get(vid)
+            if info is None:
+                continue
             if info.get("trainer") is None:
                 edge_id = self.vehicle_current_edge.get(vid, None)
                 if edge_id is not None and self.is_in_range(edge_id):
                     speed = info.get("max_speed", 0) / 20.0
                     compute = info.get("compute_power", 0) / 10.0
                     remain = info.get("remaining_steps", 0) / 100.0
-                    vehicles.append([speed, compute, remain, 1.0])
+                    vehicles.append([speed, compute, remain, slot_ratio, normalized_round, 1.0])
 
         while len(vehicles) < max_k:
-            vehicles.append([0.0, 0.0, 0.0, 0.0])
+            vehicles.append([0.0, 0.0, 0.0,slot_ratio, normalized_round, 0.0])
 
         return vehicles[:max_k]
-
-  
-
-
-
     
     def setup_logger(self):
         logger = logging.getLogger(self.server_id)
@@ -247,7 +260,7 @@ class EdgeServer(threading.Thread):
                 continue
 
             try:
-                pos_dict_copy = dict(self.position_status_dict)
+                # pos_dict_copy = dict(self.position_status_dict)
                 trainer = VehicleTrainer(
                     vehicle_id=vid,
                     data_for_vehicle=vehicle_info['data'],
@@ -274,12 +287,16 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f"{self.server_id} 啟動 {vid} 訓練")
 
                 def release_after_done():
-                    trainer.join()
-                    self.training_semaphore.release()
-                    self.logger.info(f"{self.server_id} {vid} 訓練完成，釋放 GPU slot")
-                    if vid in self.active_training_threads:
-                        self.active_training_threads[vid]['trainer'] = None
-
+                    try:
+                        trainer.join(timeout=20)  # 最多等5分鐘
+                        self.logger.info(f"{self.server_id} {vid} 訓練完成，釋放 GPU slot")
+                    except Exception as e:
+                        self.logger.error(f"{self.server_id} {vid} join 發生錯誤：{e}")
+                    finally:
+                        self.training_semaphore.release()
+                        if vid in self.active_training_threads:
+                            self.active_training_threads[vid]['trainer'] = None
+                            
                 threading.Thread(target=release_after_done, daemon=True).start()
             except Exception as e:
                 self.logger.error(f"{self.server_id} 車輛 {vid} trainer 啟動失敗：{e}")
@@ -301,8 +318,16 @@ class EdgeServer(threading.Thread):
             else:
                 self.logger.info(f"{self.server_id} 此 slot 無收到模型，版本不變")
                 
-    def run_slots(self, num_slots, slot_actions):
+    def run_slots(self, num_slots, slot_actions, max_slots=12, max_vehicles=8, max_rounds=100):
         self.logger.info(f"{self.server_id} 開始執行 run_slots()，slots = {num_slots}")
+        normalized_num_slots = num_slots / max_slots
+        self.slot_rewards = []
+        try:
+            self.prev_slot_loss = self.global_server.get_loss_for_edge(self.server_id)
+            self.logger.info(f"{self.server_id} 初始 loss（slot 0 前）= {self.prev_slot_loss:.4f}")
+        except Exception as e:
+            self.logger.warning(f"{self.server_id} 初始 loss 記錄失敗: {e}")
+            self.prev_slot_loss = 1.0  # fallback
 
         if len(slot_actions) < num_slots:
             self.logger.error(f"{self.server_id} slot_actions 長度不足（{len(slot_actions)} < {num_slots}），結束此輪")
@@ -319,10 +344,56 @@ class EdgeServer(threading.Thread):
             while self.global_clock.get_time() < expected_slot_start:
                 time.sleep(0.05)
 
+            normalized_round = self.global_server.global_round / max_rounds
+            slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
+            
             try:
                 self.run_single_slot(slot_actions[i], expected_slot_start, slot_time, global_deadline)
             except Exception as e:
                 self.logger.error(f"{self.server_id} slot {i} 執行失敗：{e}")
+            
+            try:
+                after_loss = self.global_server.get_loss_for_edge(self.server_id)
+                slot_reward = self.prev_slot_loss - after_loss
+                self.slot_rewards.append(slot_reward)
+                self.logger.info(f"{self.server_id} Slot {i+1} reward = {slot_reward:.4f}（loss {self.prev_slot_loss:.4f} → {after_loss:.4f}）")
+                self.prev_slot_loss = after_loss
+            except Exception as e:
+                self.logger.warning(f"{self.server_id} 無法計算 Slot {i+1} reward: {e}")
+                self.slot_rewards.append(0.0)
+            
+            next_slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
+            slot_action = slot_actions[i]  # binary mask 長度為 max_vehicles
+            transition = {
+                "obs": slot_obs,
+                "action": slot_action,
+                "reward": slot_reward,
+                "next_obs": next_slot_obs
+            }
+            self.logger.info(f"transition 準備儲存: obs={slot_obs}, action={slot_action}, reward={slot_reward}, next_obs={next_slot_obs}")
+
+            try:
+                self.replay_buffer.add(transition)
+                self.logger.info(f"{self.server_id} 已儲存 slot {i+1} 的 transition（reward = {slot_reward:.4f}）")
+            except Exception as e:
+                self.logger.error(f"{self.server_id} 儲存 transition 發生錯誤: {e}")
+                self.logger.error(f"transition內容: {transition}")
+
+            log_lines = [f"【Slot {i+1}】reward = {slot_reward:.4f}"]
+            log_lines.append("【obs】")
+            for j, v in enumerate(slot_obs):
+                log_lines.append(f"  車輛{j+1}: 速度={v[0]:.2f} 運算力={v[1]:.2f} 剩餘距離={v[2]:.2f} slot比例={v[3]:.2f} global round={v[4]:.2f} 存活={int(v[5])}")
+
+            log_lines.append("【action】")
+            selected = [str(k+1) for k, bit in enumerate(slot_action) if bit == 1]
+            log_lines.append("  選中的車輛: " + (", ".join(selected) if selected else "（無）"))
+
+            log_lines.append("【next_obs】")
+            for j, v in enumerate(next_slot_obs):
+                log_lines.append(f"  車輛{j+1}: 速度={v[0]:.2f} 運算力={v[1]:.2f} 剩餘距離={v[2]:.2f} slot比例={v[3]:.2f} global round={v[4]:.2f} 存活={int(v[5])}")
+
+            self.rl_logger.info("\n".join(log_lines))
+
 
         self.global_server.received_models.append((self.model.state_dict(), self.model_version))
         self.logger.info(f"{self.server_id} 已上傳模型 v{self.model_version} 給 Global Server")

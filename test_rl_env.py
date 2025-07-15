@@ -19,7 +19,7 @@ if __name__ == "__main__":
     obs, _ = env.reset()
     print("Reset 完成")
 
-    for step in range(15):
+    for step in range(100):
         # 隨機產生 action
         action = {
             i: {
@@ -40,13 +40,30 @@ if __name__ == "__main__":
             f.write(f"Global Loss: {info['loss']}\n")
             for i in range(env.num_agents):
                 f.write(f"[Edge{i}] Obs:\n")
-                for key, value in obs[i].items():
-                    f.write(f"  {key}: {value.tolist()}\n")
-                f.write(f"[Edge{i}] Action: num_slots={action[i]['num_slots']}, slot_actions={action[i]['slot_actions'].tolist()}\n")
-                f.write(f"[Edge{i}] Reward: {reward[i]:.6f}\n")
-            f.write("\n")
 
-        if (step + 1) % 1 == 0:
+                # === Global state ===
+                global_labels = [
+                    "平均速度",              
+                    "平均運算能力",          
+                    "平均剩餘路徑比例",      
+                    "有效車輛比例",          
+                    "上一輪 slot 數",        
+                    "global round 進度"     
+                ]
+                global_values = obs[i]["global"].tolist()
+
+                f.write("  global:\n")
+                for label, val in zip(global_labels, global_values):
+                    f.write(f"    {label}: {val:.4f}\n")
+
+                # 額外印出這一輪的 slot 數（action 中記錄）
+                this_round_slots = action[i]["num_slots"] + 1
+                f.write(f"  [說明] 本輪 action slot 數: {this_round_slots}\n")
+
+
+
+
+        if (step + 1) % 20 == 0:
             print(f"\n[Round {info['round']}] 測試 reset() 開始...")
             with open(log_path, "a") as f:
                 f.write(f"\n[Round {info['round']}] 測試 reset() 開始...\n")

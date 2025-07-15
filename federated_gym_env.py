@@ -7,8 +7,9 @@ import traci
 import time
 
 
+
 class FederatedGymEnv(gym.Env):
-    def __init__(self, create_servers_fn, max_slots=12, max_vehicles=8, max_rounds=100, loss_threshold=0.2, num_agents=4):
+    def __init__(self, create_servers_fn, max_slots=12, max_vehicles=8, max_rounds=30, loss_threshold=0.2, num_agents=4):
         super(FederatedGymEnv, self).__init__()
         self.create_servers_fn = create_servers_fn
         self.max_slots = max_slots
@@ -28,9 +29,9 @@ class FederatedGymEnv(gym.Env):
         self.vehicle_thread = None
 
         single_obs_space = spaces.Dict({
-            "global": spaces.Box(low=0.0, high=1.0, shape=(6,), dtype=np.float32),
-            "vehicles": spaces.Box(low=0.0, high=1.0, shape=(self.max_vehicles, 4), dtype=np.float32)
+            "global": spaces.Box(low=0.0, high=1.0, shape=(6,), dtype=np.float32)
         })
+
         single_action_space = spaces.Dict({
             "num_slots": spaces.Discrete(self.max_slots),
             "slot_actions": spaces.MultiBinary((self.max_slots, self.max_vehicles))
@@ -38,12 +39,16 @@ class FederatedGymEnv(gym.Env):
 
         self.observation_space = spaces.Dict({i: single_obs_space for i in range(self.num_agents)})
         self.action_space = spaces.Dict({i: single_action_space for i in range(self.num_agents)})
+        self.prev_num_slots = {i: 1 for i in range(self.num_agents)}  # 初始預設都是 1 slot
+
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.round = 0
         self.prev_loss = [1.0] * self.num_agents
         self.curr_loss = [1.0] * self.num_agents
+        self.prev_num_slots = {i: 1 for i in range(self.num_agents)}
+
         
         if self.vehicle_thread and self.vehicle_thread.is_alive():
             self.sim_thread.stop()  
@@ -54,7 +59,7 @@ class FederatedGymEnv(gym.Env):
         # 停掉上一輪 GlobalServer 與 SUMO
         if self.global_server and self.global_server.is_alive():
             self.global_server.stop()
-            self.global_server.join()
+            self.global_server.join(timeout=2)
 
         if self.sim_thread and self.sim_thread.is_alive():
             self.sim_thread.stop()
@@ -72,6 +77,7 @@ class FederatedGymEnv(gym.Env):
         self.global_clock = self.env_components["global_clock"]
         self.sim_thread = self.env_components["sim_thread"]
         self.vehicle_thread = self.env_components["vehicle_thread"]
+        self.global_server.max_rounds = self.max_rounds
 
 
         # 啟動新的 global server
@@ -85,18 +91,27 @@ class FederatedGymEnv(gym.Env):
 
     def step(self, action):
         self.round += 1
+        self.global_server.global_round = self.round
         for i in range(self.num_agents):
             self.prev_loss[i] = self.curr_loss[i]
 
+        self.latest_num_slots = {}
         threads = []
 
         for i, edge in enumerate(self.edge_servers):
             agent_action = action[i]
             num_slots = agent_action["num_slots"] + 1
             slot_actions = agent_action["slot_actions"][:num_slots]
+            self.latest_num_slots[i] = num_slots
 
             def run_edge_slots(edge=edge, num_slots=num_slots, slot_actions=slot_actions):
-                edge.run_slots(num_slots, slot_actions)
+                edge.run_slots(
+                    num_slots=num_slots,
+                    slot_actions=slot_actions,
+                    max_slots=self.max_slots,
+                    max_vehicles=self.max_vehicles,
+                    max_rounds=self.max_rounds
+                )
 
             t = threading.Thread(target=run_edge_slots)
             t.start()
@@ -114,24 +129,36 @@ class FederatedGymEnv(gym.Env):
             self.curr_loss[i] <= self.loss_threshold or self.round >= self.max_rounds
             for i in range(self.num_agents)
         )
-        obs = self._get_observation()
+
+        # ✅ 在取得 obs 前才更新 prev_num_slots
+        self.prev_num_slots = self.latest_num_slots
+        obs = self._get_observation(self.prev_num_slots)
+
         info = {"round": self.round, "loss": self.curr_loss}
         return obs, reward, done, False, info
 
-    def _get_observation(self):
+
+
+    def _get_observation(self, latest_num_slots=None):
+        if latest_num_slots is None:
+            latest_num_slots = {i: 1 for i in range(self.num_agents)} 
         obs = {}
         for i in range(self.num_agents):
             avg_speed, avg_compute, avg_remain = self.edge_servers[i].get_avg_info()
             vehicle_state = self.edge_servers[i].get_vehicle_state(self.max_vehicles)
 
             vehicle_ratio = len(vehicle_state) / self.max_vehicles
-            prev_slots = 0
+            prev_slots = self.prev_num_slots.get(i, 1) / self.max_slots
+            normalized_num_slots = latest_num_slots[i] / self.max_slots
             normalized_round = self.round / self.max_rounds
-
-            state1 = np.array([avg_speed, avg_compute, avg_remain, vehicle_ratio, prev_slots, normalized_round], dtype=np.float32)
-            state2 = np.zeros((self.max_vehicles, 4), dtype=np.float32)
-            for j, v in enumerate(vehicle_state):
-                state2[j] = np.array(v, dtype=np.float32)
-
-            obs[i] = {"global": state1, "vehicles": state2}
+            
+            state1 = np.array([
+                avg_speed,
+                avg_compute,
+                avg_remain,
+                vehicle_ratio,
+                prev_slots,           # ← 用 self.prev_num_slots[i]
+                normalized_round
+            ], dtype=np.float32)
+            obs[i] = {"global": state1}
         return obs

@@ -173,7 +173,15 @@ def init_environment():
     vehicle_current_edge = Manager().dict()
     vehicle_exit_edge = manager.dict()
 
-    traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
+    try:
+        traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
+        if not traci.isLoaded():
+            raise RuntimeError("TraCI 啟動失敗，無法建立 SUMO 連線。")
+    except Exception as e:
+        print(f"[Init Environment] TraCI 啟動失敗: {e}")
+        raise e
+
+    
     preload_blurred_data(cached_blurred_data)
     global_clock = GlobalClock()
     global_clock.start()

@@ -5,11 +5,12 @@ from vehicle_manager_rl import init_environment
 import threading
 import traci
 import time
+import psutil
 
 
 
 class FederatedGymEnv(gym.Env):
-    def __init__(self, create_servers_fn, max_slots=12, max_vehicles=8, max_rounds=30, loss_threshold=0.2, num_agents=4):
+    def __init__(self, create_servers_fn, max_slots=10, max_vehicles=8, max_rounds=30, loss_threshold=0.2, num_agents=4):
         super(FederatedGymEnv, self).__init__()
         self.create_servers_fn = create_servers_fn
         self.max_slots = max_slots
@@ -69,7 +70,17 @@ class FederatedGymEnv(gym.Env):
             traci.close()
         except:
             pass
+        
+        for proc in psutil.process_iter(['pid', 'name']):
+            if proc.info['name'] in ('sumo', 'sumo-gui'):
+                try:
+                    print(f"[reset] Killing residual SUMO process PID {proc.info['pid']}")
+                    proc.kill()
+                except Exception as e:
+                    print(f"[reset] Failed to kill SUMO PID {proc.info['pid']}: {e}")
 
+        time.sleep(1)  # 等待 process 完全釋放
+        
         # 重新初始化環境
         self.env_components = self.create_servers_fn()
         self.global_server = self.env_components["global_server"]
@@ -134,7 +145,13 @@ class FederatedGymEnv(gym.Env):
         self.prev_num_slots = self.latest_num_slots
         obs = self._get_observation(self.prev_num_slots)
 
-        info = {"round": self.round, "loss": self.curr_loss}
+        info = {
+            "round": self.round,
+            "loss": self.curr_loss,
+            "global_loss": self.global_server.current_loss,
+            "global_accuracy": self.global_server.current_accuracy
+        }
+
         return obs, reward, done, False, info
 
 

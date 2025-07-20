@@ -16,30 +16,28 @@ class SimulationThread(threading.Thread):
         self.step_event = threading.Event()
 
     def run(self):
-        while self.step < self.step_limit and self.running:
-            print(f"[SIM STEP] {self.step}")
-            start_time = time.time()
-            try:
-                traci.simulationStep()
-            except traci.exceptions.TraCIException as e:
-                print(f"[SimulationThread] TraCIException: {e}")
-                break
-
-            self.step += 1
-            self.step_event.set() 
-            elapsed = time.time() - start_time
-            if elapsed < self.real_time_step:
-                time.sleep(self.real_time_step - elapsed)
-            show_gpu_usage()
-
-
-        print("[SimulationThread] 結束 SUMO 模擬。")
-        self.running = False
-        # traci.close()
         try:
-            traci.close()
-        except:
-            pass
+            while self.step < self.step_limit and self.running:
+                print(f"[SIM STEP] {self.step}")
+                start_time = time.time()
+                try:
+                    traci.simulationStep()
+                except traci.exceptions.TraCIException as e:
+                    print(f"[SimulationThread] TraCIException: {e}")
+                    break
+
+                self.step += 1
+                self.step_event.set() 
+                elapsed = time.time() - start_time
+                if elapsed < self.real_time_step:
+                    time.sleep(self.real_time_step - elapsed)
+                show_gpu_usage()
+
+            print("[SimulationThread] 結束 SUMO 模擬。")
+            self.running = False
+
+        finally:
+            self.cleanup()  # ← 保證最後呼叫 cleanup，安全關掉 traci
 
     def stop(self):
         self.running = False
@@ -47,8 +45,6 @@ class SimulationThread(threading.Thread):
     def cleanup(self):
         try:
             traci.close()
-        except traci.exceptions.FatalTraCIError:
-            pass
         except Exception as e:
             print(f"[SimulationThread] traci.close() 發生錯誤: {e}")
 

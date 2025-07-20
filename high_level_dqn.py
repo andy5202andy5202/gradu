@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class HighLevelDQN(nn.Module):
-    def __init__(self, state_dim=6, action_dim=12):  # state_dim=6 for state1, action_dim=max_slots
+    def __init__(self, state_dim=6, action_dim=10):  # state_dim=6 for state1, action_dim=max_slots
         super(HighLevelDQN, self).__init__()
         self.fc1 = nn.Linear(state_dim, 128)
         self.fc2 = nn.Linear(128, 128)

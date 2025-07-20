@@ -54,7 +54,10 @@ class GlobalServer(threading.Thread):
         self.discarded_model_upload_history = []
         self.discarded_model_upload_total = 0
         self.discarded_model_uploads_this_round = 0
-        self.max_rounds = 100
+        self.max_rounds = 30
+        self.current_loss = None
+        self.current_accuracy = None
+
 
 
 
@@ -366,7 +369,9 @@ class GlobalServer(threading.Thread):
                     device=self.device
                 )
                 self.logger.info(f'Global Server 聚合後模型 - Loss: {loss:.4f}, Accuracy: {accuracy:.2f}%')
-                
+                self.current_loss = loss
+                self.current_accuracy = accuracy
+
                 for i in range(10):  # 假設是 10 類
                     acc = per_class_accuracy.get(i, 0.0)
                     self.logger.info(f"→ 類別 {i}: Accuracy = {acc:.2f}%")

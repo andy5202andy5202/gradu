@@ -9,7 +9,7 @@ import os
 # --- 設定 ---
 CHECKPOINT_DIR = 'checkpoints'
 MODEL_PATH = os.path.join(CHECKPOINT_DIR, 'high_level_dqn_episode_500.pth')
-MAX_SLOTS = 12
+MAX_SLOTS = 10
 STATE_DIM = 6
 ACTION_DIM = MAX_SLOTS
 NUM_AGENTS = 4

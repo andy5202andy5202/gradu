@@ -26,14 +26,14 @@ def train_dqn(model, target_model, optimizer, batch, gamma=0.99):
     next_obs_batch: (batch_size, 6)
     """
 
-    obs, action, reward, next_obs = batch
+    obs, action, reward, next_obs, done = batch
     q_values = model(obs)  # shape=(batch_size, action_dim)
     q_value = q_values.gather(1, action.unsqueeze(1)).squeeze(1)  # shape=(batch_size,)
 
     with torch.no_grad():
         next_q_values = target_model(next_obs)
         max_next_q_values, _ = next_q_values.max(dim=1)
-        target = reward + gamma * max_next_q_values
+        target = reward + gamma * max_next_q_values * (1 - done)
 
     loss = F.mse_loss(q_value, target)
 

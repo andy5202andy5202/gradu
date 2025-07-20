@@ -13,7 +13,8 @@ class HighLevelReplayBuffer:
             'obs': obs,             # dict of agent_id: {"global": np.array([6,])}
             'action': action,       # dict of agent_id: {"num_slots": int, ...}
             'reward': reward,       # dict of agent_id: float
-            'next_obs': next_obs    # same as obs
+            'next_obs': next_obs,    # same as obs
+            'done': bool
         } """
         if len(self.buffer) < self.capacity:
             self.buffer.append(None)
@@ -27,12 +28,14 @@ class HighLevelReplayBuffer:
         action_batch = []
         reward_batch = []
         next_obs_batch = []
+        done_batch = []
 
         for transition in batch:
             obs_batch.append(transition['obs'])          # 已是 tensor
             action_batch.append(transition['action'])    # int
             reward_batch.append(transition['reward'])    # float
             next_obs_batch.append(transition['next_obs']) # 已是 tensor
+            done_batch.append(transition.get('done', False))
         
         for i, obs in enumerate(obs_batch):
             if obs.shape != (6,):
@@ -42,8 +45,9 @@ class HighLevelReplayBuffer:
         action_batch = torch.tensor(action_batch, dtype=torch.long)
         reward_batch = torch.tensor(reward_batch, dtype=torch.float32)
         next_obs_batch = torch.stack(next_obs_batch)
+        done_batch = torch.tensor(done_batch, dtype=torch.float32)
 
-        return obs_batch, action_batch, reward_batch, next_obs_batch
+        return obs_batch, action_batch, reward_batch, next_obs_batch, done_batch
 
 
     def __len__(self):

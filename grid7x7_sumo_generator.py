@@ -89,7 +89,7 @@ with open(ROUTES_FILE, 'w') as f:
 
     vehicle_id = 0
     step = 0.0
-    for _ in range(18000):
+    for _ in range(4000):
         (x1, y1) = random.choice(entry_nodes)
         (x2, y2) = random.choice(exit_nodes)
         while (x1, y1) == (x2, y2):
@@ -109,7 +109,7 @@ with open(ROUTES_FILE, 'w') as f:
         f.write(f'    <vehicle id="veh{vehicle_id}" type="{vtype_id}" route="{route_id}" depart="{step}"/>\n')
 
         vehicle_id += 1
-        step += random.uniform(0, 4)
+        step += random.uniform(0, 6)
 
     f.write('</routes>\n')
 

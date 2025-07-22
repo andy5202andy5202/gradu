@@ -13,7 +13,8 @@ from global_server import GlobalServer
 import logging
 import multiprocessing
 from models.resnet import CIFAR_CNN
-from replay_buffer import ReplayBuffer
+from low_level_replay_buffer import ReplayBuffer
+
 
 
 
@@ -44,6 +45,11 @@ class EdgeServer(threading.Thread):
         self.upload_due_to_global_timeout_counter = upload_due_to_global_timeout_counter
         # self.model = SmallResNet(num_classes=10).to('cpu')
         self.model = CIFAR_CNN(num_classes=10).to('cpu')
+        self.low_level_dqn = None
+        self.low_level_epsilon = 0.1  # 可調整，探索率
+        self.low_level_device = 'cuda'  # 或依 device 設定
+        self.low_level_replay_buffer = None
+
 
 
         self.received_models = []
@@ -67,6 +73,11 @@ class EdgeServer(threading.Thread):
         rl_handler.setFormatter(logging.Formatter('%(message)s'))
         self.rl_logger.addHandler(rl_handler)
 
+    def attach_low_level_agent(self, low_level_dqn, replay_buffer, epsilon=0.1, device='cuda'):
+        self.low_level_dqn = low_level_dqn.to(device)
+        self.low_level_replay_buffer = replay_buffer
+        self.low_level_epsilon = epsilon
+        self.low_level_device = device
 
     
     def collect_uploaded_models(self):
@@ -219,25 +230,50 @@ class EdgeServer(threading.Thread):
             self.logger.error(f"[{vehicle_id}] 取得資料錯誤：{e}")
             return None
     
-    def run_single_slot(self, action_vector, expected_slot_start, slot_time, global_deadline):
-        
+    def run_single_slot(self, slot_obs, expected_slot_start, slot_time, global_deadline, slot_ratio, normalized_round):
+
         expected_slot_end = expected_slot_start + slot_time
         self.logger.info(f"{self.server_id} slot 預計執行 {slot_time:.1f}s，等待至 GlobalClock={expected_slot_end:.1f}s")
-        # 先找出目前還活著、且可以選的車輛 pool
-        candidate_vehicles = []
-        for vid, info in self.active_training_threads.items():
-            if info.get("trainer") is None:
+        
+        slot_obs_tensor = torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # shape (1, max_vehicles, 6)
+
+        with torch.no_grad():
+            logits = self.low_level_dqn(slot_obs_tensor)
+            probs = torch.sigmoid(logits).squeeze(0)  # shape: (max_vehicles,)
+
+        # Epsilon-greedy
+        
+        random_mask = torch.randint(0, 2, probs.shape, device=self.low_level_device)
+        action_mask = torch.where(torch.rand_like(probs) < self.low_level_epsilon, random_mask, (probs >= 0.5).int())
+
+        # existence mask
+        existence_mask = slot_obs_tensor[0, :, 5]
+        action_mask = action_mask * existence_mask.int()
+
+        action_mask = action_mask.cpu().numpy().tolist()
+
+        selected_vehicles = []
+        snapshot_keys = list(self.active_training_threads.keys())
+        for idx, bit in enumerate(action_mask):
+            if bit == 1 and idx < len(snapshot_keys):
+                vid = snapshot_keys[idx]
                 edge_id = self.vehicle_current_edge.get(vid, None)
                 if edge_id is not None and self.is_in_range(edge_id):
-                    candidate_vehicles.append(vid)
+                    selected_vehicles.append(vid)
 
-        # 按照 action_vector 選出對應 index 的車
-        selected_vehicles = []
-        for i, bit in enumerate(action_vector):
-            if bit == 1 and i < len(candidate_vehicles):
-                selected_vehicles.append(candidate_vehicles[i])
-        self.logger.info(f"{self.server_id} slot 選中的車輛: {selected_vehicles}")
+        self.logger.info(f"[{self.server_id}] Slot action mask: {action_mask}")
+        if selected_vehicles:
+            self.logger.info(f"[{self.server_id}] Slot 選中的車輛:")
+            for vid in selected_vehicles:
+                info = self.active_training_threads.get(vid, {})
+                speed = info.get('max_speed', 0)
+                compute = info.get('compute_power', 0)
+                remain = info.get('remaining_steps', 0)
+                self.logger.info(f"  車輛 {vid} → 速度={speed}, 運算力={compute}, 剩餘距離={remain}")
+        else:
+            self.logger.info(f"[{self.server_id}] Slot 無車輛被選中")
 
+        
         for vid in selected_vehicles:
             if vid not in self.active_training_threads:
                 self.logger.warning(f"{self.server_id} 車輛 {vid} 已離開系統，跳過。")
@@ -317,8 +353,11 @@ class EdgeServer(threading.Thread):
                 self.logger.info(f"{self.server_id} 聚合完成，模型版本 {self.model_version}")
             else:
                 self.logger.info(f"{self.server_id} 此 slot 無收到模型，版本不變")
-                
-    def run_slots(self, num_slots, slot_actions, max_slots=12, max_vehicles=8, max_rounds=100):
+           
+        next_slot_obs = self.get_vehicle_state(slot_ratio=slot_ratio, normalized_round=normalized_round)
+        return action_mask, next_slot_obs
+         
+    def run_slots(self, num_slots, slot_actions, max_slots=10, max_vehicles=12, max_rounds=30):
         self.logger.info(f"{self.server_id} 開始執行 run_slots()，slots = {num_slots}")
         normalized_num_slots = num_slots / max_slots
         self.slot_rewards = []
@@ -348,10 +387,13 @@ class EdgeServer(threading.Thread):
             slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
             
             try:
-                self.run_single_slot(slot_actions[i], expected_slot_start, slot_time, global_deadline)
+                action_mask, next_slot_obs = self.run_single_slot(
+                    slot_obs, expected_slot_start, slot_time, global_deadline, normalized_num_slots, normalized_round
+                )
             except Exception as e:
                 self.logger.error(f"{self.server_id} slot {i} 執行失敗：{e}")
-            
+                action_mask = [0] * max_vehicles
+
             try:
                 after_loss = self.global_server.get_loss_for_edge(self.server_id)
                 slot_reward = self.prev_slot_loss - after_loss
@@ -360,39 +402,17 @@ class EdgeServer(threading.Thread):
                 self.prev_slot_loss = after_loss
             except Exception as e:
                 self.logger.warning(f"{self.server_id} 無法計算 Slot {i+1} reward: {e}")
+                slot_reward = 0.0
                 self.slot_rewards.append(0.0)
-            
-            next_slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
-            slot_action = slot_actions[i]  # binary mask 長度為 max_vehicles
+
             transition = {
-                "obs": slot_obs,
-                "action": slot_action,
-                "reward": slot_reward,
-                "next_obs": next_slot_obs
+                'obs': slot_obs,
+                'action': action_mask,  
+                'reward': slot_reward,
+                'next_obs': next_slot_obs,
+                'done': False
             }
-            self.logger.info(f"transition 準備儲存: obs={slot_obs}, action={slot_action}, reward={slot_reward}, next_obs={next_slot_obs}")
-
-            try:
-                self.replay_buffer.add(transition)
-                self.logger.info(f"{self.server_id} 已儲存 slot {i+1} 的 transition（reward = {slot_reward:.4f}）")
-            except Exception as e:
-                self.logger.error(f"{self.server_id} 儲存 transition 發生錯誤: {e}")
-                self.logger.error(f"transition內容: {transition}")
-
-            log_lines = [f"【Slot {i+1}】reward = {slot_reward:.4f}"]
-            log_lines.append("【obs】")
-            for j, v in enumerate(slot_obs):
-                log_lines.append(f"  車輛{j+1}: 速度={v[0]:.2f} 運算力={v[1]:.2f} 剩餘距離={v[2]:.2f} slot比例={v[3]:.2f} global round={v[4]:.2f} 存活={int(v[5])}")
-
-            log_lines.append("【action】")
-            selected = [str(k+1) for k, bit in enumerate(slot_action) if bit == 1]
-            log_lines.append("  選中的車輛: " + (", ".join(selected) if selected else "（無）"))
-
-            log_lines.append("【next_obs】")
-            for j, v in enumerate(next_slot_obs):
-                log_lines.append(f"  車輛{j+1}: 速度={v[0]:.2f} 運算力={v[1]:.2f} 剩餘距離={v[2]:.2f} slot比例={v[3]:.2f} global round={v[4]:.2f} 存活={int(v[5])}")
-
-            self.rl_logger.info("\n".join(log_lines))
+            self.low_level_replay_buffer.add(transition)
 
 
         self.global_server.received_models.append((self.model.state_dict(), self.model_version))

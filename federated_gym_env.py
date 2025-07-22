@@ -28,6 +28,11 @@ class FederatedGymEnv(gym.Env):
         self.global_clock = None
         self.sim_thread = None
         self.vehicle_thread = None
+        self.low_level_agent = None
+        self.low_level_replay_buffer = None
+        self.epsilon = None
+        self.device = None
+
 
         single_obs_space = spaces.Dict({
             "global": spaces.Box(low=0.0, high=1.0, shape=(6,), dtype=np.float32)
@@ -89,6 +94,14 @@ class FederatedGymEnv(gym.Env):
         self.sim_thread = self.env_components["sim_thread"]
         self.vehicle_thread = self.env_components["vehicle_thread"]
         self.global_server.max_rounds = self.max_rounds
+        for edge_server in self.edge_servers:
+            edge_server.attach_low_level_agent(
+                low_level_dqn=self.low_level_agent,
+                replay_buffer=self.low_level_replay_buffer,
+                epsilon=self.epsilon,
+                device=self.device
+            )
+
 
 
         # 啟動新的 global server
@@ -141,7 +154,7 @@ class FederatedGymEnv(gym.Env):
             for i in range(self.num_agents)
         )
 
-        # ✅ 在取得 obs 前才更新 prev_num_slots
+        # 在取得 obs 前才更新 prev_num_slots
         self.prev_num_slots = self.latest_num_slots
         obs = self._get_observation(self.prev_num_slots)
 

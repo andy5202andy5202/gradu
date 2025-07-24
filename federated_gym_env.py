@@ -10,7 +10,7 @@ import psutil
 
 
 class FederatedGymEnv(gym.Env):
-    def __init__(self, create_servers_fn, max_slots=10, max_vehicles=8, max_rounds=30, loss_threshold=0.2, num_agents=4):
+    def __init__(self, create_servers_fn, max_slots=10, max_vehicles=10, max_rounds=20, loss_threshold=0.02, num_agents=4):
         super(FederatedGymEnv, self).__init__()
         self.create_servers_fn = create_servers_fn
         self.max_slots = max_slots

@@ -359,7 +359,7 @@ class EdgeServer(threading.Thread):
         next_slot_obs = self.get_vehicle_state(slot_ratio=slot_ratio, normalized_round=normalized_round)
         return action_mask, next_slot_obs
          
-    def run_slots(self, num_slots, slot_actions, max_slots=10, max_vehicles=12, max_rounds=30):
+    def run_slots(self, num_slots, slot_actions, max_slots=10, max_vehicles=10, max_rounds=30):
         self.logger.info(f"{self.server_id} 開始執行 run_slots()，slots = {num_slots}")
         normalized_num_slots = num_slots / max_slots
         self.slot_rewards = []

@@ -23,7 +23,7 @@ from low_level_dqn_utils import train_low_level_dqn
 def save_checkpoint(
     episode, 
     dqn, target_dqn, optimizer, buffer, epsilon, train_rewards_log, train_loss_log,
-    low_level_dqn, low_level_target_dqn, low_level_optimizer, low_level_buffer
+    low_level_dqn, low_level_target_dqn, low_level_optimizer, low_level_buffer,low_level_epsilon
 ):
     os.makedirs("checkpoints", exist_ok=True)
     torch.save({
@@ -43,6 +43,7 @@ def save_checkpoint(
     state = {
         'episode': episode,
         'epsilon': epsilon,
+        'low_level_epsilon': low_level_epsilon,
         'train_rewards_log': train_rewards_log,
         'train_loss_log': train_loss_log
     }
@@ -84,6 +85,8 @@ def load_checkpoint(dqn, target_dqn, optimizer,
 
     with open('checkpoints/training_state.pkl', 'rb') as f:
         state = pickle.load(f)
+    
+    state['low_level_epsilon'] = state.get('low_level_epsilon', 1.0)
 
     return buffer, low_level_buffer, state
 
@@ -183,8 +186,9 @@ def main():
     LOW_LEVEL_STATE_DIM = 6  # 看你的設計
     LOW_LEVEL_ACTION_DIM = MAX_VEHICLES
     LOW_LEVEL_BUFFER_CAPACITY = 10000
-    low_level_dqn = LowLevelDQN(LOW_LEVEL_STATE_DIM, LOW_LEVEL_ACTION_DIM).cuda()
-    low_level_target_dqn = LowLevelDQN(LOW_LEVEL_STATE_DIM, LOW_LEVEL_ACTION_DIM).cuda()
+    low_level_dqn = LowLevelDQN(input_dim=LOW_LEVEL_STATE_DIM, hidden_dim=64, max_vehicles=MAX_VEHICLES).cuda()
+    low_level_target_dqn = LowLevelDQN(input_dim=LOW_LEVEL_STATE_DIM, hidden_dim=64, max_vehicles=MAX_VEHICLES).cuda()
+
     low_level_target_dqn.load_state_dict(low_level_dqn.state_dict())
 
     low_level_optimizer = optim.Adam(low_level_dqn.parameters(), lr=LOW_LEVEL_LR)
@@ -219,17 +223,19 @@ def main():
 
     if checkpoint:
         buffer, low_level_replay_buffer, state = checkpoint
-        target_dqn.load_state_dict(dqn.state_dict())
         start_episode = state['episode'] + 1
         epsilon = state['epsilon']
+        low_level_epsilon = state['low_level_epsilon']
         train_rewards_log = state['train_rewards_log']
         train_loss_log = state['train_loss_log']
+        
         log_msg = f"Resumed from episode {start_episode}\n"
         print(log_msg)
         with open('logs/high_level_training_log.txt', 'a') as f:
             f.write(log_msg)
     else:
         target_dqn.load_state_dict(dqn.state_dict())
+        low_level_target_dqn.load_state_dict(low_level_dqn.state_dict())
         start_episode = 0
 
         
@@ -253,7 +259,10 @@ def main():
             with open('logs/high_level_training_log.txt', 'a') as f:
                 f.write(log_msg)
             continue
-
+        
+        for edge in env.edge_servers:
+            edge.low_level_epsilon = low_level_epsilon
+        
         done = False
         episode_reward = {i: 0.0 for i in range(NUM_AGENTS)}
         low_level_losses = []
@@ -401,7 +410,7 @@ def main():
 
         save_checkpoint(
             episode, dqn, target_dqn, optimizer, buffer, epsilon, train_rewards_log, train_loss_log,
-            low_level_dqn, low_level_target_dqn, low_level_optimizer, low_level_replay_buffer
+            low_level_dqn, low_level_target_dqn, low_level_optimizer, low_level_replay_buffer,low_level_epsilon
         )
 
         if (episode + 1) % EVAL_INTERVAL == 0:

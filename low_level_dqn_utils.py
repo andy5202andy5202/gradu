@@ -17,12 +17,19 @@ def train_low_level_dqn(policy_net, target_net, optimizer, batch, gamma, tau):
     current_prob = torch.sigmoid(current_logits)
 
     with torch.no_grad():
-        next_logits = target_net(next_obs_batch)
+        next_logits = target_net(next_obs_batch)  # (B, V)
         next_prob = torch.sigmoid(next_logits)
-        max_next_prob, _ = next_prob.max(dim=1)
-        target_value = reward_batch + gamma * max_next_prob * (1 - done_batch)
-        target_value = target_value.unsqueeze(1).repeat(1, current_prob.size(1))
+        max_next_prob, _ = next_prob.max(dim=1)  # (B,)
 
+        # 強制 reshape 為 (B, 1)
+        reward_batch = reward_batch.view(-1, 1)       
+        done_flags = done_batch.view(-1, 1).float()   
+        max_next_prob = max_next_prob.view(-1, 1)
+
+        target_value = reward_batch + gamma * max_next_prob * (1 - done_flags)  # (B, 1)
+        target_value = target_value.repeat(1, current_prob.size(1))             # (B, V)
+
+        
     bce_loss_fn = nn.BCELoss(reduction='none')
     loss = bce_loss_fn(current_prob, action_batch.float())
     loss = loss * existence_mask

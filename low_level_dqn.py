@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class LowLevelDQN(nn.Module):
-    def __init__(self, input_dim=6, hidden_dim=64, max_vehicles=20):
+    def __init__(self, input_dim=6, hidden_dim=64, max_vehicles=10):
         super(LowLevelDQN, self).__init__()
         self.max_vehicles = max_vehicles
 

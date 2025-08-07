@@ -2,20 +2,46 @@ import random
 import torch
 import torch.nn.functional as F
 
-def select_action(model, state, epsilon, action_dim):
+# def select_action(model, state, epsilon, action_dim):
+#     """ 
+#     state: torch tensor, shape=(batch, 6) or (6,)
+#     epsilon: float, exploration rate
+#     action_dim: int, 最大可選的 slot 數（12）
+#     """
+#     if random.random() < epsilon:
+#         return random.randint(0, action_dim - 1)
+#     else:
+#         if len(state.shape) == 1:
+#             state = state.unsqueeze(0)
+#         with torch.no_grad():
+#             q_values = model(state)
+#             return q_values.argmax(dim=1).item()
+
+def select_action(model, state, epsilon, action_dim, agent_id=None):
     """ 
     state: torch tensor, shape=(batch, 6) or (6,)
     epsilon: float, exploration rate
     action_dim: int, 最大可選的 slot 數（12）
+    agent_id: int or None, 用來決定 log 檔案輸出路徑
     """
+    if len(state.shape) == 1:
+        state = state.unsqueeze(0)
+
     if random.random() < epsilon:
-        return random.randint(0, action_dim - 1)
+        action = random.randint(0, action_dim - 1)
+        log_path = f"logs/high_level_rl_agent{agent_id}.log" if agent_id is not None else "logs/select_action.log"
+        with open(log_path, "a") as f:
+            f.write(f"[Eval select_action] ε={epsilon:.4f}, action={action} (Random)\n")
+        return action
     else:
-        if len(state.shape) == 1:
-            state = state.unsqueeze(0)
         with torch.no_grad():
             q_values = model(state)
-            return q_values.argmax(dim=1).item()
+            action = q_values.argmax(dim=1).item()
+            log_path = f"logs/high_level_rl_agent{agent_id}.log" if agent_id is not None else "logs/select_action.log"
+            with open(log_path, "a") as f:
+                f.write(f"[Eval select_action] ε={epsilon:.4f}, action={action}, Q={q_values.cpu().numpy().tolist()}\n")
+            return action
+
 
 def train_dqn(model, target_model, optimizer, batch, gamma=0.99):
     """

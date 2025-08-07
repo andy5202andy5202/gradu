@@ -52,7 +52,11 @@ def save_checkpoint(
     
     log_message = f"Checkpoint saved at Episode {episode+1}\n"
     print(log_message)
+    
     with open('logs/high_level_training_log.txt', 'a') as f:
+        f.write(log_message)
+        
+    with open('logs/low_level_training_log.txt', 'a') as f:
         f.write(log_message)
 
 
@@ -96,10 +100,11 @@ def evaluate_agent(dqn, env, episode):
     try:
         
         original_epsilons = [edge.low_level_epsilon for edge in env.edge_servers]
-        for edge in env.edge_servers:
-            edge.low_level_epsilon = 0.0
+        
             
         obs, _ = env.reset()
+        for edge in env.edge_servers:
+            edge.low_level_epsilon = 0.0
         done = False
         round_metrics = []
 
@@ -107,7 +112,7 @@ def evaluate_agent(dqn, env, episode):
             action = {}
             for agent_id in range(env.num_agents):
                 state1 = torch.tensor(obs[agent_id]["global"], dtype=torch.float32)
-                num_slots = select_action(dqn, state1, epsilon=0, action_dim=env.max_slots)
+                num_slots = select_action(dqn, state1, epsilon=0, action_dim=env.max_slots, agent_id=agent_id)
                 dummy_slot_actions = np.random.randint(0, 2, (env.max_slots, env.max_vehicles)).astype(np.int8)
                 action[agent_id] = {"num_slots": num_slots, "slot_actions": dummy_slot_actions}
 
@@ -162,11 +167,11 @@ def main():
     TAU = 0.02
     MAX_VEHICLES = 10
     
-    LOW_LEVEL_BATCH_SIZE = 16
+    LOW_LEVEL_BATCH_SIZE = 8
     LOW_LEVEL_LR = 1e-4
     LOW_LEVEL_GAMMA = 0.99
     LOW_LEVEL_TAU = 0.02
-    LOW_LEVEL_TRAIN_REPEAT = 25
+    LOW_LEVEL_TRAIN_REPEAT = 50
     LOW_LEVEL_BUFFER_CAPACITY = 10000
     
     LOW_LEVEL_EPSILON_START = 1.0
@@ -194,7 +199,6 @@ def main():
     low_level_optimizer = optim.Adam(low_level_dqn.parameters(), lr=LOW_LEVEL_LR)
     low_level_replay_buffer = LowLevelReplayBuffer(LOW_LEVEL_BUFFER_CAPACITY)
 
-    low_level_epsilon = 0.1
 
 
     dqn = HighLevelDQN(STATE_DIM, ACTION_DIM)
@@ -217,6 +221,7 @@ def main():
         low_level_dqn, low_level_target_dqn, low_level_optimizer,
         buffer, low_level_replay_buffer
     )
+    os.makedirs("logs", exist_ok=True)
 
     
     episode_metrics_path = 'logs/episode_metrics.csv'
@@ -243,13 +248,83 @@ def main():
         with open(episode_metrics_path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['episode', 'avg_reward', 'avg_loss', 'epsilon'])
+            
+    if start_episode == 0:
+        print("[Baseline] : 執行一次隨機 baseline 評估...")
+
+        # 建立環境
+        env = FederatedGymEnv(create_servers_fn, max_slots=MAX_SLOTS, num_agents=NUM_AGENTS)
+        env.low_level_agent = low_level_dqn
+        env.low_level_replay_buffer = low_level_replay_buffer
+        env.epsilon = 1.0  
+        env.device = 'cuda'
+
+        obs, _ = env.reset()
+
+        # 設定 low-level epsilon
+        for edge in env.edge_servers:
+            edge.low_level_epsilon = 1.0
+
+        done = False
+        baseline_metrics = []
+
+        while not done:
+            action = {}
+            for agent_id in range(NUM_AGENTS):
+                num_slots = np.random.randint(1, MAX_SLOTS + 1)
+                slot_actions = np.random.randint(0, 2, (num_slots + 1, env.max_vehicles)).astype(np.int8)
+                action[agent_id] = {
+                    "num_slots": num_slots,
+                    "slot_actions": slot_actions
+                }
+
+            obs, _, done, _, info = env.step(action)
+
+            loss = info.get('global_loss', None)
+            acc = info.get('global_accuracy', None)
+            baseline_metrics.append({'round': len(baseline_metrics)+1, 'global_loss': loss, 'global_accuracy': acc})
+
+            print(f"[Baseline] Round {len(baseline_metrics)}, Loss: {loss:.4f}")
+            with open('logs/high_level_training_log.txt', 'a') as f:
+                f.write(f"[Baseline] 使用 high ε = {env.epsilon}, low ε = {[edge.low_level_epsilon for edge in env.edge_servers]}\n")
+
+        os.makedirs('evaluation_logs', exist_ok=True)
+        eval_filename = 'evaluation_logs/eval_episode_0_full_rounds.csv'
+        with open(eval_filename, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=['round', 'global_loss', 'global_accuracy'])
+            writer.writeheader()
+            writer.writerows(baseline_metrics)
+
+        print(f"[Baseline] 完成 baseline，結果寫入 {eval_filename}")
+
+        start_episode = 1
+
+
 
     for episode in range(start_episode, NUM_EPISODES):
         gc.collect()
         torch.cuda.empty_cache()
 
         is_high_level_episode = (episode % 2 == 1)
+
+
+        # 根據 episode 奇偶來控制是否使用 epsilon
+        # if is_high_level_episode:
+        #     # 奇數 episode 訓練 high-level → low-level epsilon 強制為 0
+        #     epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)  # 高層 decay
+   
+        # else:
+        #     # 偶數 episode 訓練 low-level → high-level epsilon 強制為 0
+        #     low_level_epsilon = max(LOW_LEVEL_EPSILON_END, low_level_epsilon * LOW_LEVEL_EPSILON_DECAY)
+
+            
+        env.epsilon = low_level_epsilon
+            
         print(f"[{'HighLevel' if is_high_level_episode else 'LowLevel'}] Episode {episode+1}")
+        
+        # for edge in env.edge_servers:
+        #     edge.low_level_epsilon = low_level_epsilon
+
         
         try:
             obs, _ = env.reset()
@@ -262,35 +337,38 @@ def main():
         
         for edge in env.edge_servers:
             edge.low_level_epsilon = low_level_epsilon
-        
+            
         done = False
         episode_reward = {i: 0.0 for i in range(NUM_AGENTS)}
         low_level_losses = []
         low_level_rewards = []
+        with open('logs/high_level_training_log.txt', 'a') as f:
+            f.write(f"[Episode {episode+1}] high ε = {epsilon:.4f}, low ε = {low_level_epsilon:.4f}\n")
+
+        # if episode == 112:
+        #     buffer.buffer = [] 
+        #     buffer.position = 0
+        #     print(f"[Episode {episode}] 清空 high-level replay buffer")
+        #     with open('logs/high_level_training_log.txt', 'a') as f:
+        #         f.write(f"[Episode {episode}] 清空 high-level replay buffer\n")
+ 
+        #     low_level_replay_buffer.buffer = []
+        #     low_level_replay_buffer.position = 0
+        #     print(f"[Episode {episode}] 清空 low-level replay buffer")
+        #     with open('logs/low_level_training_log.txt', 'a') as f:
+        #         f.write(f"[Episode {episode}] 清空 low-level replay buffer\n")
 
         while not done:
             action = {}
 
             for agent_id in range(NUM_AGENTS):
                 state1 = torch.tensor(obs[agent_id]["global"], dtype=torch.float32)
-                num_slots = select_action(dqn, state1, epsilon if is_high_level_episode else 0, ACTION_DIM)
+                num_slots = select_action(dqn, state1, epsilon, ACTION_DIM, agent_id=agent_id)
 
                 slot_actions = np.zeros((MAX_SLOTS, env.max_vehicles), dtype=np.int8)
                 action[agent_id] = {"num_slots": num_slots, "slot_actions": slot_actions}
 
             next_obs, reward, done, _, _ = env.step(action)
-
-            # for agent_id in range(NUM_AGENTS):
-            #     # High-level buffer
-            #     high_transition = {
-            #         "obs": torch.tensor(obs[agent_id]["global"], dtype=torch.float32),
-            #         "action": action[agent_id]["num_slots"],
-            #         "reward": reward[agent_id],
-            #         "next_obs": torch.tensor(next_obs[agent_id]["global"], dtype=torch.float32),
-            #         "done": done
-            #     }
-            #     buffer.add(high_transition)
-            #     episode_reward[agent_id] += reward[agent_id]
             
             for agent_id in range(NUM_AGENTS):
                 obs_tensor = torch.tensor(obs[agent_id]["global"], dtype=torch.float32)
@@ -303,7 +381,15 @@ def main():
                 normalized_time = env.round / env.max_rounds  # normalized ∈ [0,1]
                 alpha = 2  # 時間加權指數
                 weight = (1 + normalized_time) ** alpha
-                scaled_reward = rew * weight
+
+
+                scaled_reward = np.tanh(rew * weight * 5)
+                high_reward_log_path = f"logs/high_reward_{agent_id}.log"
+                if not os.path.exists(high_reward_log_path):
+                    with open(high_reward_log_path, 'w', encoding='utf-8') as f:
+                        f.write("round,scaled_reward,raw_reward,normalized_round,action_slot\n")
+                with open(high_reward_log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"{env.round},{scaled_reward:.6f},{rew:.6f},{normalized_time:.6f},{act}\n")
                 
                 with open(f'logs/high_level_rl_agent{agent_id}.log', 'a', encoding='utf-8') as logf:
                     logf.write(f"[Round {env.round}] 高層轉移紀錄\n")
@@ -326,7 +412,14 @@ def main():
 
             # 訓練 high-level 或 low-level
             if is_high_level_episode:
-                for step in range(TRAIN_REPEAT_PER_STEP):
+                # epsilon = max(EPSILON_END, epsilon * EPSILON_DECAY)
+                if len(buffer) < 1000:
+                    repeat = 3
+                elif len(buffer) < 3000:
+                    repeat = 5
+                else:
+                    repeat = 8
+                for step in range(repeat):
                     if len(buffer) >= BATCH_SIZE:
                         try:
                             batch = buffer.sample(BATCH_SIZE)
@@ -343,8 +436,10 @@ def main():
                             with open('logs/high_level_training_log.txt', 'a') as f:
                                 f.write(log_msg)
             else:
+                # low_level_epsilon = max(LOW_LEVEL_EPSILON_END, low_level_epsilon * LOW_LEVEL_EPSILON_DECAY)
                 if len(low_level_replay_buffer) >= LOW_LEVEL_BATCH_SIZE:
-                    for _ in range(LOW_LEVEL_TRAIN_REPEAT):
+                    effective_repeat = min(25, len(low_level_replay_buffer) // LOW_LEVEL_BATCH_SIZE)
+                    for _ in range(effective_repeat):
                         batch = low_level_replay_buffer.sample(LOW_LEVEL_BATCH_SIZE)
                         low_loss = train_low_level_dqn(
                             low_level_dqn, low_level_target_dqn,

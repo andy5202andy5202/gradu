@@ -10,7 +10,7 @@ import psutil
 
 
 class FederatedGymEnv(gym.Env):
-    def __init__(self, create_servers_fn, max_slots=10, max_vehicles=10, max_rounds=20, loss_threshold=0.02, num_agents=4):
+    def __init__(self, create_servers_fn, max_slots=10, max_vehicles=10, max_rounds=15, loss_threshold=0.02, num_agents=4):
         super(FederatedGymEnv, self).__init__()
         self.create_servers_fn = create_servers_fn
         self.max_slots = max_slots
@@ -55,7 +55,6 @@ class FederatedGymEnv(gym.Env):
         self.curr_loss = [1.0] * self.num_agents
         self.prev_num_slots = {i: 1 for i in range(self.num_agents)}
 
-        
         if self.vehicle_thread and self.vehicle_thread.is_alive():
             self.sim_thread.stop()  
             self.sim_thread.join(timeout=2)
@@ -87,12 +86,48 @@ class FederatedGymEnv(gym.Env):
         time.sleep(1)  # 等待 process 完全釋放
         
         # 重新初始化環境
-        self.env_components = self.create_servers_fn()
-        self.global_server = self.env_components["global_server"]
-        self.edge_servers = self.env_components["edge_servers"]
-        self.global_clock = self.env_components["global_clock"]
-        self.sim_thread = self.env_components["sim_thread"]
-        self.vehicle_thread = self.env_components["vehicle_thread"]
+        try:
+            print("[reset] 正在執行 create_servers_fn()...")
+            self.env_components = self.create_servers_fn()
+            print("[reset] create_servers_fn() 成功")
+        except Exception as e:
+            print(f"[reset] create_servers_fn() 發生錯誤：{e}")
+            import traceback
+            traceback.print_exc()
+            return None, {}
+
+        # self.env_components = self.create_servers_fn()
+        if self.env_components is None:
+            raise RuntimeError("[reset] create_servers_fn() 回傳 None")
+        # self.global_server = self.env_components["global_server"]
+        # self.edge_servers = self.env_components["edge_servers"]
+        # self.global_clock = self.env_components["global_clock"]
+        # self.sim_thread = self.env_components["sim_thread"]
+        # self.vehicle_thread = self.env_components["vehicle_thread"]
+        # self.global_server = self.env_components.get("global_server", None)
+        # self.edge_servers = self.env_components.get("edge_servers", None)
+        # self.global_clock = self.env_components.get("global_clock", None)
+        # self.sim_thread = self.env_components.get("sim_thread", None)
+        # self.vehicle_thread = self.env_components.get("vehicle_thread", None)
+        # if self.global_server is None or self.edge_servers is None:
+        #     print("[reset] ERROR: create_servers_fn() 回傳不完整")
+        #     return None, {}
+        try:
+            self.global_server = self.env_components.get("global_server", None)
+            self.edge_servers = self.env_components.get("edge_servers", None)
+            self.global_clock = self.env_components.get("global_clock", None)
+            self.sim_thread = self.env_components.get("sim_thread", None)
+            self.vehicle_thread = self.env_components.get("vehicle_thread", None)
+
+            if self.global_server is None or self.edge_servers is None:
+                print("[reset] ERROR: create_servers_fn() 回傳不完整")
+                return None, {}
+            print(f"[reset] 新 sim_thread ID: {id(self.sim_thread)}")
+
+        except Exception as e:
+            print(f"[reset] 錯誤：env_components 欄位缺失或格式錯誤：{e}")
+            return None, {}
+
         self.global_server.max_rounds = self.max_rounds
         for edge_server in self.edge_servers:
             edge_server.attach_low_level_agent(
@@ -101,15 +136,13 @@ class FederatedGymEnv(gym.Env):
                 epsilon=self.epsilon,
                 device=self.device
             )
-
-
+        
 
         # 啟動新的 global server
         self.global_server.start()
 
-        # 等待 GlobalClock 確實重啟完成
+        # 等待 GlobalClock 確實重啟完
         time.sleep(0.5)
-
         return self._get_observation(), {}
 
 
@@ -170,6 +203,9 @@ class FederatedGymEnv(gym.Env):
 
 
     def _get_observation(self, latest_num_slots=None):
+        if self.edge_servers is None:
+            print("[_get_observation] self.edge_servers 是 None")
+            return None
         if latest_num_slots is None:
             latest_num_slots = {i: 1 for i in range(self.num_agents)} 
         obs = {}

@@ -25,7 +25,7 @@ class LowLevelReplayBuffer:
 
         obs_batch = torch.stack([b['obs'] for b in batch])               # (B, V, 6)
         action_batch = torch.stack([b['action'] for b in batch])         # (B, V)
-        reward_batch = torch.stack([b['reward'] for b in batch]).squeeze()  # (B,)
+        reward_batch = torch.stack([b['reward'] for b in batch])  # shape (B,) → 不要再 .squeeze()
         next_obs_batch = torch.stack([b['next_obs'] for b in batch])     # (B, V, 6)
         done_batch = torch.stack([b['done'] for b in batch]).squeeze()   # (B,)
 

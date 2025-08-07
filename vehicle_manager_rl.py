@@ -139,90 +139,185 @@ def vehicle_manager_loop(sim_thread, active_training_threads, cached_blurred_dat
                 log(global_clock, f"[錯誤] 移除車輛 {vid} 發生例外：{e}")
 
     
+# def init_environment():
+#     try:
+#         if traci.isLoaded():
+#             print("[Init] traci 已啟動，關閉舊連線")
+#             traci.close()
+#     except:
+#         pass
+#     manager = Manager()
+#     SUMO_BINARY = 'sumo'
+#     CONFIG_FILE = 'grid7x7.sumocfg'
+#     DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
+    
+
+#     if os.path.exists("env.log"):
+#         os.remove("env.log")
+#     veh_log_path = os.path.join("veh", "veh.log")
+#     if os.path.exists(veh_log_path):
+#         os.remove(veh_log_path)
+#     if os.path.exists("uploads"):
+#         for f in os.listdir("uploads"):
+#             os.remove(os.path.join("uploads", f))
+#     else:
+#         os.makedirs("uploads", exist_ok=True)
+
+
+#     active_training_threads = {}
+#     cached_blurred_data = {}
+#     upload_due_to_position = manager.dict({'count': 0})
+#     upload_due_to_early_stop = manager.dict({'count': 0})
+#     upload_due_to_global_timeout = manager.dict({'count': 0})
+#     vehicle_position_status = manager.dict()
+#     vehicle_current_edge = Manager().dict()
+#     vehicle_exit_edge = manager.dict()
+
+#     try:
+#         traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
+#         if not traci.isLoaded():
+#             raise RuntimeError("TraCI 啟動失敗，無法建立 SUMO 連線。")
+#     except Exception as e:
+#         print(f"[Init Environment] TraCI 啟動失敗: {e}")
+#         raise e
+
+    
+#     preload_blurred_data(cached_blurred_data)
+#     global_clock = GlobalClock()
+#     global_clock.start()
+
+#     global_server = GlobalServer(
+#         global_data_path=DATA_PATH, 
+#         total_edge_servers=4,
+#         upload_due_to_position=upload_due_to_position, 
+#         upload_due_to_early_stop=upload_due_to_early_stop, 
+#         upload_due_to_global_timeout=upload_due_to_global_timeout,
+#         T=120, global_clock=global_clock)
+
+#     edge_servers = init_edge_servers(
+#         cached_blurred_data, DATA_PATH, active_training_threads, 
+#         global_server, global_clock, 
+#         upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
+#         vehicle_position_status, vehicle_current_edge, vehicle_exit_edge)
+
+#     global_server.edge_server_map = edge_servers
+
+#     sim_thread = SimulationThread(step_limit=7200, real_time_step=1.0)
+#     sim_thread.start()
+    
+#     vehicle_thread = threading.Thread(
+#         target=vehicle_manager_loop,
+#         args=(sim_thread, active_training_threads, cached_blurred_data,
+#             upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
+#             vehicle_position_status, vehicle_current_edge, vehicle_exit_edge,
+#             global_clock),
+#         daemon=True
+#     )
+    
+#     vehicle_thread.start()
+
+#     return {
+#         "global_server": global_server,
+#         "edge_servers": [edge_servers[f"Edge{i}"] for i in range(4)],
+#         "global_clock": global_clock,
+#         "sim_thread": sim_thread,
+#         "vehicle_thread": vehicle_thread
+#     }
 def init_environment():
     try:
+        print("[Init] 初始化環境開始")
+
         if traci.isLoaded():
             print("[Init] traci 已啟動，關閉舊連線")
             traci.close()
     except:
         pass
-    manager = Manager()
-    SUMO_BINARY = 'sumo'
-    CONFIG_FILE = 'grid7x7.sumocfg'
-    DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
-    
-
-    if os.path.exists("env.log"):
-        os.remove("env.log")
-    veh_log_path = os.path.join("veh", "veh.log")
-    if os.path.exists(veh_log_path):
-        os.remove(veh_log_path)
-    if os.path.exists("uploads"):
-        for f in os.listdir("uploads"):
-            os.remove(os.path.join("uploads", f))
-    else:
-        os.makedirs("uploads", exist_ok=True)
-
-
-    active_training_threads = {}
-    cached_blurred_data = {}
-    upload_due_to_position = manager.dict({'count': 0})
-    upload_due_to_early_stop = manager.dict({'count': 0})
-    upload_due_to_global_timeout = manager.dict({'count': 0})
-    vehicle_position_status = manager.dict()
-    vehicle_current_edge = Manager().dict()
-    vehicle_exit_edge = manager.dict()
 
     try:
-        traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
-        if not traci.isLoaded():
-            raise RuntimeError("TraCI 啟動失敗，無法建立 SUMO 連線。")
-    except Exception as e:
-        print(f"[Init Environment] TraCI 啟動失敗: {e}")
-        raise e
+        manager = Manager()
+        SUMO_BINARY = 'sumo'
+        CONFIG_FILE = 'grid7x7.sumocfg'
+        DATA_PATH = os.path.join(os.getcwd(), 'cifar_noniid_4groups')
 
-    
-    preload_blurred_data(cached_blurred_data)
-    global_clock = GlobalClock()
-    global_clock.start()
+        # 清除前次紀錄
+        if os.path.exists("env.log"):
+            os.remove("env.log")
+        veh_log_path = os.path.join("veh", "veh.log")
+        if os.path.exists(veh_log_path):
+            os.remove(veh_log_path)
+        if os.path.exists("uploads"):
+            for f in os.listdir("uploads"):
+                os.remove(os.path.join("uploads", f))
+        else:
+            os.makedirs("uploads", exist_ok=True)
 
-    global_server = GlobalServer(
-        global_data_path=DATA_PATH, 
-        total_edge_servers=4,
-        upload_due_to_position=upload_due_to_position, 
-        upload_due_to_early_stop=upload_due_to_early_stop, 
-        upload_due_to_global_timeout=upload_due_to_global_timeout,
-        T=120, global_clock=global_clock)
+        # 初始化共享資源
+        active_training_threads = {}
+        cached_blurred_data = {}
+        upload_due_to_position = manager.dict({'count': 0})
+        upload_due_to_early_stop = manager.dict({'count': 0})
+        upload_due_to_global_timeout = manager.dict({'count': 0})
+        vehicle_position_status = manager.dict()
+        vehicle_current_edge = manager.dict()
+        vehicle_exit_edge = manager.dict()
 
-    edge_servers = init_edge_servers(
-        cached_blurred_data, DATA_PATH, active_training_threads, 
-        global_server, global_clock, 
-        upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
-        vehicle_position_status, vehicle_current_edge, vehicle_exit_edge)
+        # TraCI
+        try:
+            traci.start([SUMO_BINARY, '-c', CONFIG_FILE, '--collision.action', 'none'])
+            if not traci.isLoaded():
+                raise RuntimeError("TraCI 啟動失敗，無法建立 SUMO 連線。")
+        except Exception as e:
+            print(f"[Init] TraCI 啟動失敗: {e}")
+            raise
 
-    global_server.edge_server_map = edge_servers
+        # 資料與 Server
+        preload_blurred_data(cached_blurred_data)
+        global_clock = GlobalClock()
+        global_clock.start()
 
-    sim_thread = SimulationThread(step_limit=7200, real_time_step=1.0)
-    sim_thread.start()
-    
-    vehicle_thread = threading.Thread(
-        target=vehicle_manager_loop,
-        args=(sim_thread, active_training_threads, cached_blurred_data,
+        global_server = GlobalServer(
+            global_data_path=DATA_PATH, 
+            total_edge_servers=4,
+            upload_due_to_position=upload_due_to_position, 
+            upload_due_to_early_stop=upload_due_to_early_stop, 
+            upload_due_to_global_timeout=upload_due_to_global_timeout,
+            T=120, global_clock=global_clock)
+
+        edge_servers = init_edge_servers(
+            cached_blurred_data, DATA_PATH, active_training_threads, 
+            global_server, global_clock, 
             upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
-            vehicle_position_status, vehicle_current_edge, vehicle_exit_edge,
-            global_clock),
-        daemon=True
-    )
-    
-    vehicle_thread.start()
+            vehicle_position_status, vehicle_current_edge, vehicle_exit_edge)
 
-    return {
-        "global_server": global_server,
-        "edge_servers": [edge_servers[f"Edge{i}"] for i in range(4)],
-        "global_clock": global_clock,
-        "sim_thread": sim_thread,
-        "vehicle_thread": vehicle_thread
-    }
+        global_server.edge_server_map = edge_servers
+
+        sim_thread = SimulationThread(step_limit=7200, real_time_step=1.0)
+        sim_thread.start()
+
+        vehicle_thread = threading.Thread(
+            target=vehicle_manager_loop,
+            args=(sim_thread, active_training_threads, cached_blurred_data,
+                upload_due_to_position, upload_due_to_early_stop, upload_due_to_global_timeout,
+                vehicle_position_status, vehicle_current_edge, vehicle_exit_edge,
+                global_clock),
+            daemon=True
+        )
+        vehicle_thread.start()
+
+        print("[Init] 初始化成功")
+        return {
+            "global_server": global_server,
+            "edge_servers": [edge_servers[f"Edge{i}"] for i in range(4)],
+            "global_clock": global_clock,
+            "sim_thread": sim_thread,
+            "vehicle_thread": vehicle_thread
+        }
+
+    except Exception as e:
+        import traceback
+        print(f"[InitEnvironment Error] 發生錯誤：{e}")
+        traceback.print_exc()
+        return None
 
 
 

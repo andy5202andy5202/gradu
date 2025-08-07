@@ -22,8 +22,10 @@ class SimulationThread(threading.Thread):
                 start_time = time.time()
                 try:
                     traci.simulationStep()
-                except traci.exceptions.TraCIException as e:
-                    print(f"[SimulationThread] TraCIException: {e}")
+                except Exception as e:
+                    print(f"[SimulationThread] simulationStep 發生錯誤：{e}")
+                    import traceback
+                    traceback.print_exc()
                     break
 
                 self.step += 1
@@ -32,6 +34,8 @@ class SimulationThread(threading.Thread):
                 if elapsed < self.real_time_step:
                     time.sleep(self.real_time_step - elapsed)
                 show_gpu_usage()
+                print(f"[SIM LOOP] step={self.step}, running={self.running}, thread_id={id(self)}")
+
 
             print("[SimulationThread] 結束 SUMO 模擬。")
             self.running = False

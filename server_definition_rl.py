@@ -64,6 +64,11 @@ class EdgeServer(threading.Thread):
         # self.replay_buffer = ReplayBuffer()
         self.rl_logger = logging.getLogger(self.server_id + "_rl")
         self.rl_logger.setLevel(logging.INFO)
+        self.reward_log_path = f"logs/reward_{self.server_id}.log"
+        os.makedirs("logs", exist_ok=True)
+        with open(self.reward_log_path, 'w', encoding='utf-8') as f:
+            f.write("slot,reward,raw_reward,prev_loss,after_loss\n")  # 標題列
+
         
         if self.rl_logger.hasHandlers():
             self.rl_logger.handlers.clear()
@@ -72,11 +77,13 @@ class EdgeServer(threading.Thread):
         rl_handler.setFormatter(logging.Formatter('%(message)s'))
         self.rl_logger.addHandler(rl_handler)
 
-    def attach_low_level_agent(self, low_level_dqn, replay_buffer, epsilon=0.1, device='cuda'):
+    def attach_low_level_agent(self, low_level_dqn, replay_buffer, epsilon, device='cuda'):
         self.low_level_dqn = low_level_dqn.to(device)
         self.low_level_replay_buffer = replay_buffer
         self.low_level_epsilon = epsilon
         self.low_level_device = device
+        
+        self.logger.info(f"attach_low_level_agent: epsilon = {epsilon}")
 
     
     def collect_uploaded_models(self):
@@ -233,7 +240,8 @@ class EdgeServer(threading.Thread):
 
         expected_slot_end = expected_slot_start + slot_time
         self.logger.info(f"{self.server_id} slot 預計執行 {slot_time:.1f}s，等待至 GlobalClock={expected_slot_end:.1f}s")
-        
+        self.logger.info(f"[{self.server_id}] 當前 low_level_epsilon = {self.low_level_epsilon:.4f}")
+
         # slot_obs_flat = np.array(slot_obs, dtype=np.float32).flatten()
         # slot_obs_tensor = torch.tensor(slot_obs_flat, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # shape (1, 60)
         slot_obs_tensor = torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # shape (1, V, F)
@@ -400,16 +408,19 @@ class EdgeServer(threading.Thread):
             try:
                 after_loss = self.global_server.get_loss_for_edge(self.server_id)
                 raw_reward = self.prev_slot_loss - after_loss
+                scale = 30
+                round_factor = (1 + normalized_round) ** 1.5  
 
-                alpha = 2  # 權重
-                time_ratio = (self.global_server.global_round + 1) / max_rounds  # e.g., 1~20 normalized
-                weight = (1 + time_ratio) ** alpha
-                slot_reward = raw_reward * weight
+                slot_reward = np.tanh(raw_reward * scale * round_factor)
 
+
+                
                 self.slot_rewards.append(slot_reward)
                 self.logger.info(
-                    f"{self.server_id} Slot {i+1} reward = {slot_reward:.4f}（raw={raw_reward:.4f}, weight={weight:.2f}, loss {self.prev_slot_loss:.4f} → {after_loss:.4f}）"
+                    f"{self.server_id} Slot {i+1} reward = {slot_reward:.4f}（raw={raw_reward:.4f}, loss {self.prev_slot_loss:.4f} → {after_loss:.4f}）"
                 )
+                with open(self.reward_log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"{i+1},{slot_reward:.6f},{raw_reward:.6f},{self.prev_slot_loss:.6f},{after_loss:.6f}\n")
                 self.prev_slot_loss = after_loss
             except Exception as e:
                 self.logger.warning(f"{self.server_id} 無法計算 Slot {i+1} reward: {e}")
@@ -429,11 +440,11 @@ class EdgeServer(threading.Thread):
 
 
             self.low_level_replay_buffer.add(
-                torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0),          
-                torch.tensor(action_mask, dtype=torch.float32).unsqueeze(0),      
-                torch.tensor([slot_reward], dtype=torch.float32),                 
-                torch.tensor(next_slot_obs, dtype=torch.float32).unsqueeze(0),     
-                torch.tensor([False])                                          
+                torch.tensor(slot_obs, dtype=torch.float32),               # (V, 6)
+                torch.tensor(action_mask, dtype=torch.float32),            # (V,)
+                torch.tensor(slot_reward, dtype=torch.float32),            # scalar
+                torch.tensor(next_slot_obs, dtype=torch.float32),          # (V, 6)
+                torch.tensor(False)                                        # bool
             )
 
 

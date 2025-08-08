@@ -5,15 +5,15 @@ import numpy as np
 import math
 
 eval_dir = 'evaluation_logs'
-target_eps = [0,1,2,100,110,120,130]
+target_eps = [0,10]
 colors = plt.cm.viridis(np.linspace(0, 1, len(target_eps)))
-rounds = list(range(1, 21))  # 固定 x 軸為 1~20
+rounds = list(range(1, 16))  # 固定 x 軸為 1~20
 
 # ====== 收集所有 loss 決定 y 軸刻度 ======
 all_losses = []
 for ep in target_eps:
     df = pd.read_csv(os.path.join(eval_dir, f"eval_episode_{ep}_full_rounds.csv"))
-    all_losses.extend(df['global_loss'][:20])
+    all_losses.extend(df['global_loss'][:15])
 
 loss_min = math.floor(min(all_losses) * 10) / 10
 loss_max = math.ceil(max(all_losses) * 10) / 10
@@ -23,8 +23,8 @@ loss_ticks = np.arange(loss_min, loss_max + 0.01, 0.1)
 plt.figure(figsize=(10, 5))
 for idx, ep in enumerate(target_eps):
     df = pd.read_csv(os.path.join(eval_dir, f"eval_episode_{ep}_full_rounds.csv"))
-    plt.plot(rounds, df['global_loss'][:20], marker='o', linestyle='--', color=colors[idx], label=f"Eval Ep {ep}")
-plt.title("Global Loss over 20 Rounds")
+    plt.plot(rounds, df['global_loss'][:15], marker='o', linestyle='--', color=colors[idx], label=f"Eval Ep {ep}")
+plt.title("Global Loss over 15 Rounds")
 plt.xlabel("Round")
 plt.ylabel("Loss")
 plt.xticks(rounds)
@@ -40,7 +40,7 @@ plt.close()
 plt.figure(figsize=(10, 5))
 for idx, ep in enumerate(target_eps):
     df = pd.read_csv(os.path.join(eval_dir, f"eval_episode_{ep}_full_rounds.csv"))
-    plt.plot(rounds, df['global_accuracy'][:20], marker='x', linestyle='-', color=colors[idx], label=f"Eval Ep {ep}")
+    plt.plot(rounds, df['global_accuracy'][:15], marker='x', linestyle='-', color=colors[idx], label=f"Eval Ep {ep}")
 plt.title("Global Accuracy over 20 Rounds")
 plt.xlabel("Round")
 plt.ylabel("Accuracy (%)")

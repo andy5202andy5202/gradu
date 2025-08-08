@@ -142,8 +142,9 @@ class EdgeServer(threading.Thread):
         return avg_speed / 20, avg_compute / 10, avg_remain / 100
     
     def get_vehicle_state(self, max_k=10, slot_ratio=1.0, normalized_round=0.0):
-        vehicles = []
+        vehicles, vids = [], []
         snapshot_keys = list(self.active_training_threads.keys())
+
         for vid in snapshot_keys:
             info = self.active_training_threads.get(vid)
             if info is None:
@@ -151,15 +152,18 @@ class EdgeServer(threading.Thread):
             if info.get("trainer") is None:
                 edge_id = self.vehicle_current_edge.get(vid, None)
                 if edge_id is not None and self.is_in_range(edge_id):
-                    speed = info.get("max_speed", 0) / 20.0
+                    speed   = info.get("max_speed", 0) / 20.0
                     compute = info.get("compute_power", 0) / 4.0
-                    remain = info.get("remaining_steps", 0) / 100.0
+                    remain  = info.get("remaining_steps", 0) / 100.0
                     vehicles.append([speed, compute, remain, slot_ratio, normalized_round, 1.0])
+                    vids.append(vid)
 
         while len(vehicles) < max_k:
-            vehicles.append([0.0, 0.0, 0.0,slot_ratio, normalized_round, 0.0])
+            vehicles.append([0.0, 0.0, 0.0, slot_ratio, normalized_round, 0.0])
+            vids.append(None)
 
-        return vehicles[:max_k]
+        return vehicles[:max_k], vids[:max_k]
+
     
     def setup_logger(self):
         logger = logging.getLogger(self.server_id)
@@ -236,40 +240,28 @@ class EdgeServer(threading.Thread):
             self.logger.error(f"[{vehicle_id}] 取得資料錯誤：{e}")
             return None
     
-    def run_single_slot(self, slot_obs, expected_slot_start, slot_time, global_deadline, slot_ratio, normalized_round):
-
+    def run_single_slot(self, slot_obs, slot_vids, expected_slot_start, slot_time, global_deadline, slot_ratio, normalized_round):
         expected_slot_end = expected_slot_start + slot_time
         self.logger.info(f"{self.server_id} slot 預計執行 {slot_time:.1f}s，等待至 GlobalClock={expected_slot_end:.1f}s")
         self.logger.info(f"[{self.server_id}] 當前 low_level_epsilon = {self.low_level_epsilon:.4f}")
 
-        # slot_obs_flat = np.array(slot_obs, dtype=np.float32).flatten()
-        # slot_obs_tensor = torch.tensor(slot_obs_flat, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # shape (1, 60)
-        slot_obs_tensor = torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # shape (1, V, F)
+        slot_obs_tensor = torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # (1,V,F)
+        existence_mask = torch.tensor([v[5] for v in slot_obs], dtype=torch.float32, device=self.low_level_device)  # (V,)
 
-        existence_mask = torch.tensor([v[5] for v in slot_obs], dtype=torch.float32).to(self.low_level_device)  # shape (max_vehicles,)
         with torch.no_grad():
-            logits = self.low_level_dqn(slot_obs_tensor)
-            probs = torch.sigmoid(logits).squeeze(0)  # shape: (max_vehicles,)
+            q_values = self.low_level_dqn(slot_obs_tensor).squeeze(0)  # (V,2)
+            greedy = (q_values[:, 1] > q_values[:, 0]).to(torch.int64) # (V,)
 
-        # Epsilon-greedy
-        
-        random_mask = torch.randint(0, 2, probs.shape, device=self.low_level_device)
-        action_mask = torch.where(torch.rand_like(probs) < self.low_level_epsilon, random_mask, (probs >= 0.5).int())
+        random_mask = torch.randint(0, 2, greedy.shape, device=self.low_level_device)
+        eps_draw = torch.rand_like(greedy, dtype=torch.float32)
+        action_mask = torch.where(eps_draw < self.low_level_epsilon, random_mask, greedy)
+        action_mask = (action_mask * (existence_mask > 0).to(torch.int64))
 
-        # existence mask
-        
-        action_mask = action_mask * existence_mask.int()
-
-        action_mask = action_mask.cpu().numpy().tolist()
-
+        # 依 slot_vids 對齊選車（修正 bit 判斷）
         selected_vehicles = []
-        snapshot_keys = list(self.active_training_threads.keys())
-        for idx, bit in enumerate(action_mask):
-            if bit == 1 and idx < len(snapshot_keys):
-                vid = snapshot_keys[idx]
-                edge_id = self.vehicle_current_edge.get(vid, None)
-                if edge_id is not None and self.is_in_range(edge_id):
-                    selected_vehicles.append(vid)
+        for idx, bit in enumerate(action_mask.tolist()):
+            if bit == 1 and slot_vids[idx] is not None:
+                selected_vehicles.append(slot_vids[idx])
 
         self.logger.info(f"[{self.server_id}] Slot action mask: {action_mask}")
         if selected_vehicles:
@@ -355,17 +347,15 @@ class EdgeServer(threading.Thread):
         with self.received_models_lock:
             if self.received_models:
                 aggregated = aggregate_models(self.received_models, self)
-                self.model.load_state_dict({
-                    k: v for k, v in aggregated.items() if k in self.model.state_dict()
-                })
+                self.model.load_state_dict({k: v for k, v in aggregated.items() if k in self.model.state_dict()})
                 self.received_models.clear()
                 self.model_version += 1
                 self.logger.info(f"{self.server_id} 聚合完成，模型版本 {self.model_version}")
             else:
                 self.logger.info(f"{self.server_id} 此 slot 無收到模型，版本不變")
-           
-        next_slot_obs = self.get_vehicle_state(slot_ratio=slot_ratio, normalized_round=normalized_round)
-        return action_mask, next_slot_obs
+
+        next_slot_obs, next_slot_vids = self.get_vehicle_state(slot_ratio=slot_ratio, normalized_round=normalized_round)
+        return action_mask, next_slot_obs, next_slot_vids
          
     def run_slots(self, num_slots, slot_actions, max_slots=10, max_vehicles=10, max_rounds=30):
         self.logger.info(f"{self.server_id} 開始執行 run_slots()，slots = {num_slots}")
@@ -394,17 +384,17 @@ class EdgeServer(threading.Thread):
                 time.sleep(0.05)
 
             normalized_round = self.global_server.global_round / max_rounds
-            slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
-            
+            slot_obs, slot_vids = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
+
             try:
-                action_mask, next_slot_obs = self.run_single_slot(
-                    slot_obs, expected_slot_start, slot_time, global_deadline, normalized_num_slots, normalized_round
+                action_mask, next_slot_obs, next_slot_vids = self.run_single_slot(
+                    slot_obs, slot_vids, expected_slot_start, slot_time, global_deadline,
+                    normalized_num_slots, normalized_round
                 )
             except Exception as e:
                 self.logger.error(f"{self.server_id} slot {i} 執行失敗：{e}")
-                action_mask = [0] * max_vehicles
-                # next_slot_obs = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
-
+                action_mask = torch.zeros(max_vehicles, dtype=torch.long)  # fallback
+                next_slot_obs, _ = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
             try:
                 after_loss = self.global_server.get_loss_for_edge(self.server_id)
                 raw_reward = self.prev_slot_loss - after_loss
@@ -440,16 +430,12 @@ class EdgeServer(threading.Thread):
 
 
             self.low_level_replay_buffer.add(
-                torch.tensor(slot_obs, dtype=torch.float32),               # (V, 6)
-                torch.tensor(action_mask, dtype=torch.float32),            # (V,)
-                torch.tensor(slot_reward, dtype=torch.float32),            # scalar
-                torch.tensor(next_slot_obs, dtype=torch.float32),          # (V, 6)
-                torch.tensor(False)                                        # bool
+                torch.tensor(slot_obs, dtype=torch.float32),                          # (V,6)
+                torch.tensor(action_mask.detach().cpu().tolist(), dtype=torch.long),  # (V,)
+                torch.tensor(slot_reward, dtype=torch.float32),                       # scalar
+                torch.tensor(next_slot_obs, dtype=torch.float32),                     # (V,6)
+                torch.tensor(False)                                                   # bool
             )
-
-
-
-
 
         self.global_server.received_models.append((self.model.state_dict(), self.model_version))
         self.logger.info(f"{self.server_id} 已上傳模型 v{self.model_version} 給 Global Server")

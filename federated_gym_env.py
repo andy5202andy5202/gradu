@@ -211,9 +211,13 @@ class FederatedGymEnv(gym.Env):
         obs = {}
         for i in range(self.num_agents):
             avg_speed, avg_compute, avg_remain = self.edge_servers[i].get_avg_info()
-            vehicle_state = self.edge_servers[i].get_vehicle_state(self.max_vehicles)
+            # vehicle_state = self.edge_servers[i].get_vehicle_state(self.max_vehicles)
 
-            vehicle_ratio = len(vehicle_state) / self.max_vehicles
+            # vehicle_ratio = len(vehicle_state) / self.max_vehicles
+            vehicles, _ = self.edge_servers[i].get_vehicle_state(self.max_vehicles)
+            # 用第 6 維的存在旗標算比例（你現在的 obs 第 6 維就是 existence）
+            exist_count = sum(v[5] for v in vehicles)
+            vehicle_ratio = float(exist_count) / self.max_vehicles
             prev_slots = self.prev_num_slots.get(i, 1) / self.max_slots
             normalized_num_slots = latest_num_slots[i] / self.max_slots
             normalized_round = self.round / self.max_rounds

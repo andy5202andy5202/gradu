@@ -16,8 +16,62 @@ import sys
 import traceback
 from low_level_dqn import LowLevelDQN
 from low_level_replay_buffer import LowLevelReplayBuffer
+import time
 
 from low_level_dqn_utils import train_low_level_dqn
+# >>> BEGIN PATCH (helpers in train_high_level.py)
+import csv
+from pathlib import Path
+
+def append_eval_summary(eval_csv_path, summary_path="evaluation_logs/summary.csv",
+                        tag="current", high_level_loss=None, low_level_loss=None):
+    """
+    從剛剛輸出的單次評估 CSV（包含 global_loss 欄位）彙整平均數，追加到 summary.csv。
+    - eval_csv_path: 剛存好的評估檔路徑（單回或單次 run 的 df）
+    - tag: 這次評估的名稱（如 'ep42'、'checkpoint_100k'）
+    - high_level_loss/low_level_loss: 可選，若你有在評估階段計算到
+    """
+    eval_csv_path = Path(eval_csv_path)
+    summary_path = Path(summary_path)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 讀入剛剛輸出的評估 CSV
+    import pandas as pd
+    df = pd.read_csv(eval_csv_path)
+
+    # 盡量穩健的彙整方式：有 global_loss 就用尾端 5 步平均；否則用整體平均
+    if "global_loss" in df.columns and len(df["global_loss"]) > 0:
+        tail_n = min(5, len(df))
+        avg_global_loss = float(df["global_loss"].tail(tail_n).mean())
+    else:
+        avg_global_loss = float(df.mean(numeric_only=True).mean())
+
+    # 若有 slot_reward 欄位，就加個平均 reward 做參考
+    avg_slot_reward = None
+    for col in ["slot_reward", "reward", "slot_rewards"]:
+        if col in df.columns and len(df[col]) > 0:
+            avg_slot_reward = float(df[col].mean())
+            break
+
+    row = {
+        "tag": str(tag),
+        "avg_global_loss": avg_global_loss,
+        "avg_slot_reward": avg_slot_reward,
+        "high_level_loss": high_level_loss,
+        "low_level_loss": low_level_loss,
+        "timestamp": int(time.time()),
+        "csv": str(eval_csv_path)
+    }
+
+    # 追加到 summary.csv（若不存在就寫 header）
+    write_header = not summary_path.exists()
+    with summary_path.open("a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+# >>> END PATCH
+
 
 
 def save_checkpoint(
@@ -96,15 +150,69 @@ def load_checkpoint(dqn, target_dqn, optimizer,
 
 
 
-def evaluate_agent(dqn, env, episode):
-    try:
+# def evaluate_agent(dqn, env, episode):
+#     try:
         
-        original_epsilons = [edge.low_level_epsilon for edge in env.edge_servers]
+#         original_epsilons = [edge.low_level_epsilon for edge in env.edge_servers]
         
             
+#         obs, _ = env.reset()
+#         for edge in env.edge_servers:
+#             edge.low_level_epsilon = 0.0
+#         done = False
+#         round_metrics = []
+
+#         while not done:
+#             action = {}
+#             for agent_id in range(env.num_agents):
+#                 state1 = torch.tensor(obs[agent_id]["global"], dtype=torch.float32)
+#                 num_slots = select_action(dqn, state1, epsilon=0, action_dim=env.max_slots, agent_id=agent_id)
+#                 dummy_slot_actions = np.random.randint(0, 2, (env.max_slots, env.max_vehicles)).astype(np.int8)
+#                 action[agent_id] = {"num_slots": num_slots, "slot_actions": dummy_slot_actions}
+
+#             obs, _, done, _, info = env.step(action)
+
+#             global_loss = info.get('global_loss', None)
+#             global_accuracy = info.get('global_accuracy', None)
+#             round_metrics.append({'round': len(round_metrics) + 1, 'global_loss': global_loss, 'global_accuracy': global_accuracy})
+
+#         os.makedirs('evaluation_logs', exist_ok=True)
+#         eval_filename = f'evaluation_logs/eval_episode_{episode+1}_full_rounds.csv'
+#         with open(eval_filename, 'w', newline='') as f:
+#             writer = csv.DictWriter(f, fieldnames=['round', 'global_loss', 'global_accuracy'])
+#             writer.writeheader()
+#             writer.writerows(round_metrics)
+
+#         log_message = f"[Evaluate] Episode {episode+1}: Full evaluation results saved to {eval_filename}\n"
+        
+#         append_eval_summary(
+#             eval_csv_path=eval_csv_path,
+#             summary_path="evaluation_logs/summary.csv",
+#             tag=f"ep{episode_idx}_greedy",          # 依你的情境改：當前 episode、或 checkpoint 名稱
+#             high_level_loss=hloss if 'hloss' in locals() else None,
+#             low_level_loss=lloss if 'lloss' in locals() else None
+#         )
+#     except Exception as e:
+#         error_detail = traceback.format_exc()
+#         log_message = f"[Evaluate] Episode {episode+1} failed: {e}\n{error_detail}\n"
+
+#     finally:
+#         for edge, original_epsilon in zip(env.edge_servers, original_epsilons):
+#             edge.low_level_epsilon = original_epsilon
+#         with open('logs/high_level_training_log.txt', 'a') as log_file:
+#             log_file.write(log_message)
+
+def evaluate_agent(dqn, env, episode):
+    try:
+        # 備份並將 low-level epsilon 與 env.epsilon 全部設為 0（確保 reset 時也為 0）
+        original_env_eps = getattr(env, "epsilon", None)
+        original_epsilons = [edge.low_level_epsilon for edge in env.edge_servers]
+
+        env.epsilon = 0.0
         obs, _ = env.reset()
         for edge in env.edge_servers:
             edge.low_level_epsilon = 0.0
+
         done = False
         round_metrics = []
 
@@ -113,14 +221,18 @@ def evaluate_agent(dqn, env, episode):
             for agent_id in range(env.num_agents):
                 state1 = torch.tensor(obs[agent_id]["global"], dtype=torch.float32)
                 num_slots = select_action(dqn, state1, epsilon=0, action_dim=env.max_slots, agent_id=agent_id)
-                dummy_slot_actions = np.random.randint(0, 2, (env.max_slots, env.max_vehicles)).astype(np.int8)
-                action[agent_id] = {"num_slots": num_slots, "slot_actions": dummy_slot_actions}
+                # 低層在 eval 用 greedy 由 Edge 決策，不需要在這裡指定 slot_actions
+                action[agent_id] = {"num_slots": num_slots, "slot_actions": np.zeros((env.max_slots, env.max_vehicles), dtype=np.int8)}
 
             obs, _, done, _, info = env.step(action)
 
             global_loss = info.get('global_loss', None)
             global_accuracy = info.get('global_accuracy', None)
-            round_metrics.append({'round': len(round_metrics) + 1, 'global_loss': global_loss, 'global_accuracy': global_accuracy})
+            round_metrics.append({
+                'round': len(round_metrics) + 1,
+                'global_loss': global_loss,
+                'global_accuracy': global_accuracy
+            })
 
         os.makedirs('evaluation_logs', exist_ok=True)
         eval_filename = f'evaluation_logs/eval_episode_{episode+1}_full_rounds.csv'
@@ -130,15 +242,29 @@ def evaluate_agent(dqn, env, episode):
             writer.writerows(round_metrics)
 
         log_message = f"[Evaluate] Episode {episode+1}: Full evaluation results saved to {eval_filename}\n"
+
+        # 寫入 summary（**修正未定義變數**）
+        append_eval_summary(
+            eval_csv_path=eval_filename,
+            summary_path="evaluation_logs/summary.csv",
+            tag=f"ep{episode+1}_greedy",
+            high_level_loss=None,   # 若你在 eval 同時計算 loss 可填入
+            low_level_loss=None
+        )
+
     except Exception as e:
         error_detail = traceback.format_exc()
         log_message = f"[Evaluate] Episode {episode+1} failed: {e}\n{error_detail}\n"
 
     finally:
+        # 還原 epsilon
+        if original_env_eps is not None:
+            env.epsilon = original_env_eps
         for edge, original_epsilon in zip(env.edge_servers, original_epsilons):
             edge.low_level_epsilon = original_epsilon
         with open('logs/high_level_training_log.txt', 'a') as log_file:
             log_file.write(log_message)
+
 
 def safe_exit():
     # cleanup global_server, threads, GPU
@@ -249,7 +375,7 @@ def main():
             writer = csv.writer(f)
             writer.writerow(['episode', 'avg_reward', 'avg_loss', 'epsilon'])
             
-    if start_episode == 0:
+    if start_episode == 1:
         print("[Baseline] : 執行一次隨機 baseline 評估...")
 
         # 建立環境
@@ -423,13 +549,22 @@ def main():
                     if len(buffer) >= BATCH_SIZE:
                         try:
                             batch = buffer.sample(BATCH_SIZE)
-                            loss = train_dqn(dqn, target_dqn, optimizer, batch, gamma=GAMMA)
+                            ret = train_dqn(dqn, target_dqn, optimizer, batch, gamma=GAMMA)
+                            if isinstance(ret, (tuple, list)):
+                                loss, grad_norm = ret[0], ret[1]
+                            else:
+                                loss, grad_norm = ret, None
+
                             train_loss_log.append(loss)
 
-                            log_msg = f"[訓練] Episode {episode+1} Global Round {env.round} Step {step+1}: Loss={loss:.4f}\n"
+                            log_msg = f"[訓練] Episode {episode+1} Global Round {env.round} Step {step+1}: Loss={loss:.4f}"
+                            if grad_norm is not None:
+                                log_msg += f", GradNorm={grad_norm:.4f}"
+                            log_msg += "\n"
                             print(log_msg, end='')
                             with open('logs/high_level_training_log.txt', 'a') as f:
                                 f.write(log_msg)
+
                         except Exception as e:
                             log_msg = f"Training error at episode {episode+1}: {e}\n"
                             print(log_msg)

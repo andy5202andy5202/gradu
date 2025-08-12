@@ -1,0 +1,3 @@
+tag,avg_global_loss,avg_slot_reward,high_level_loss,low_level_loss,timestamp,csv
+ep10_greedy,2.1958245237668357,,,,1754967591,evaluation_logs/eval_episode_10_full_rounds.csv
+ep20_greedy,2.0323310758823006,,,,1754995156,evaluation_logs/eval_episode_20_full_rounds.csv

@@ -302,25 +302,24 @@ class GlobalServer(threading.Thread):
             self.logger.error(f"Heatmap 繪圖失敗：{str(e)}")
             
     def get_per_edge_loss(self):
-        """
-        回傳每個 EdgeServer 的 loss，用 global dataset 計算
-        若模型不存在或資料集為空，則回傳預設值 1.0
-        """
         loss_list = []
         criterion = nn.CrossEntropyLoss()
-
-        for edge_id in sorted(self.edge_server_map.keys()):  # 確保順序固定
+        for edge_id in sorted(self.edge_server_map.keys()):
             edge = self.edge_server_map[edge_id]
             try:
+                # --- NEW: 在鎖內抓快照 ---
+                with edge.model_lock:
+                    state = {k: v.detach().cpu().clone() for k, v in edge.model.state_dict().items()}
+                model_on_device = CIFAR_CNN(num_classes=10).to(self.device)
+                model_on_device.load_state_dict(state)
                 dataloader = create_dataloader(self.global_data, batch_size=32)
-                model_on_device = copy.deepcopy(edge.model).to(self.device)
                 loss, _, _ = calculate_loss_and_accuracy(model_on_device, dataloader, criterion, device=self.device)
                 loss_list.append(loss)
             except Exception as e:
                 self.logger.warning(f"GlobalServer 無法計算 {edge_id} 的 loss：{e}")
-                loss_list.append(1.0)  # fallback 預設值
-
+                loss_list.append(1.0)
         return loss_list
+
     
     def run(self):
         try:
@@ -458,19 +457,34 @@ class GlobalServer(threading.Thread):
                 })
         save_to_csv("per_class_accuracy", f"{base_name}_per_class_accuracy.csv", rows)
         
+    # def get_loss_for_edge(self, edge_id):
+    #     try:
+    #         # 取得 edge 的模型
+    #         edge = self.edge_server_map[edge_id]
+    #         model = copy.deepcopy(edge.model).to(self.device)
+            
+    #         # 使用 global dataset 評估 loss
+    #         dataloader = create_dataloader(self.global_data, batch_size=32)
+    #         loss, _, _ = calculate_loss_and_accuracy(
+    #             model, dataloader, torch.nn.CrossEntropyLoss(), device=self.device
+    #         )
+    #         return loss
+    #     except Exception as e:
+    #         self.logger.warning(f"[get_loss_for_edge] 計算 {edge_id} loss 時發生錯誤: {e}")
+    #         return 1.0  # fallback 預設值
+
     def get_loss_for_edge(self, edge_id):
         try:
-            # 取得 edge 的模型
             edge = self.edge_server_map[edge_id]
-            model = copy.deepcopy(edge.model).to(self.device)
-            
-            # 使用 global dataset 評估 loss
+            # --- NEW: 在 edge 的鎖內抓「狀態快照」 ---
+            with edge.model_lock:
+                state = {k: v.detach().cpu().clone() for k, v in edge.model.state_dict().items()}
+            # 用快照建立一份同架構模型來評估
+            model = CIFAR_CNN(num_classes=10).to(self.device)
+            model.load_state_dict(state)
             dataloader = create_dataloader(self.global_data, batch_size=32)
-            loss, _, _ = calculate_loss_and_accuracy(
-                model, dataloader, torch.nn.CrossEntropyLoss(), device=self.device
-            )
+            loss, _, _ = calculate_loss_and_accuracy(model, dataloader, torch.nn.CrossEntropyLoss(), device=self.device)
             return loss
         except Exception as e:
             self.logger.warning(f"[get_loss_for_edge] 計算 {edge_id} loss 時發生錯誤: {e}")
-            return 1.0  # fallback 預設值
-
+            return 1.0

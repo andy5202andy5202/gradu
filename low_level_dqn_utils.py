@@ -108,7 +108,9 @@ def train_low_level_dqn(policy_net, target_net, optimizer, batch, gamma, tau, lo
 
     optimizer.zero_grad()
     loss.backward()
+    torch.nn.utils.clip_grad_norm_(policy_net.parameters(), max_norm=5.0)  # 新增
     optimizer.step()
+
 
     # 週期性記錄 avg TD error
     global _LL_STEP
@@ -116,9 +118,15 @@ def train_low_level_dqn(policy_net, target_net, optimizer, batch, gamma, tau, lo
     with torch.no_grad():
         td_abs = (masked_target - masked_pred).abs()
         avg_td_error = (td_abs.sum() / denom).item()
+        q_all = policy_net(obs_batch)   # (B,V,2)
+        q1, q0 = q_all[..., 1], q_all[..., 0]
+        q_diff = (q1 - q0) * existence_mask
+        denom = existence_mask.sum().clamp_min(1.0)
+        q_diff_mean = (q_diff.sum() / denom).item()
+
         if _LL_STEP % log_every == 0:
             with open(_LL_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(f"{_LL_STEP},{loss.item():.6f},{avg_td_error:.6f},{int(time.time())}\n")
+                f.write(f"{_LL_STEP},{loss.item():.6f},{avg_td_error:.6f},{q_diff_mean:.6f},{int(time.time())}\n")
 
         for t, s in zip(target_net.parameters(), policy_net.parameters()):
             t.data.mul_(1.0 - tau).add_(tau * s.data)

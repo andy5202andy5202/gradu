@@ -12,6 +12,7 @@ import multiprocessing
 from models.resnet import CIFAR_CNN
 from low_level_replay_buffer import LowLevelReplayBuffer as ReplayBuffer
 import numpy as np
+import csv
 
 
 
@@ -55,6 +56,7 @@ class EdgeServer(threading.Thread):
         self.last_selection_time = time.time()
         self.model_version = 1
         self.training_semaphore = multiprocessing.Semaphore(25)
+        self.model_lock = threading.Lock()
         self.received_models_lock = threading.Lock()
         self.update_model(self.global_server.model.state_dict(), self.global_server.model_version)
         self.position_status_dict = position_status_dict
@@ -67,7 +69,7 @@ class EdgeServer(threading.Thread):
         self.reward_log_path = f"logs/reward_{self.server_id}.log"
         os.makedirs("logs", exist_ok=True)
         with open(self.reward_log_path, 'w', encoding='utf-8') as f:
-            f.write("slot,reward,raw_reward,prev_loss,after_loss\n")  # 標題列
+            f.write("slot,reward,rel_delta,prev_loss,after_loss,w_out\n")
 
         
         if self.rl_logger.hasHandlers():
@@ -199,8 +201,9 @@ class EdgeServer(threading.Thread):
 
     
     def get_model(self):
-        """提供最新的模型與版本號"""
-        return self.model.state_dict(), self.model_version
+        with self.model_lock:
+            return {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}, self.model_version
+
     
     
     def update_model(self, new_state_dict, new_version, alpha=0.7):
@@ -210,16 +213,17 @@ class EdgeServer(threading.Thread):
         """
         old_state_dict = self.model.state_dict()
         new_state_dict_smooth = {}
-
+        
         for key in old_state_dict:
             if isinstance(old_state_dict[key], torch.Tensor) and torch.is_floating_point(old_state_dict[key]):
                 new_param = (1 - alpha) * old_state_dict[key] + alpha * new_state_dict[key].to(old_state_dict[key].device)
                 new_state_dict_smooth[key] = new_param
             else:
                 new_state_dict_smooth[key] = new_state_dict[key]
-
-        self.model.load_state_dict(new_state_dict_smooth)
-        self.model_version = new_version
+        
+        with self.model_lock:
+            self.model.load_state_dict(new_state_dict_smooth)
+            self.model_version = new_version
         self.logger.info(f"{self.server_id} 使用 α={alpha} momentum 更新模型 → 版本 {new_version}")
 
 
@@ -299,11 +303,13 @@ class EdgeServer(threading.Thread):
 
             try:
                 # pos_dict_copy = dict(self.position_status_dict)
+                with self.model_lock:
+                    model_snapshot = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
                 trainer = VehicleTrainer(
                     vehicle_id=vid,
                     data_for_vehicle=vehicle_info['data'],
                     edge_server_id=self.server_id,
-                    model_state_dict=copy.deepcopy(self.model.state_dict()),
+                    model_state_dict=model_snapshot,
                     model_version=self.model_version,
                     global_version=self.global_server.model_version,
                     upload_due_to_position_counter=self.upload_due_to_position,
@@ -347,12 +353,15 @@ class EdgeServer(threading.Thread):
         with self.received_models_lock:
             if self.received_models:
                 aggregated = aggregate_models(self.received_models, self)
-                self.model.load_state_dict({k: v for k, v in aggregated.items() if k in self.model.state_dict()})
+                # --- NEW: 寫入時上鎖 ---
+                with self.model_lock:
+                    self.model.load_state_dict({k: v for k, v in aggregated.items() if k in self.model.state_dict()})
+                    self.model_version += 1
                 self.received_models.clear()
-                self.model_version += 1
                 self.logger.info(f"{self.server_id} 聚合完成，模型版本 {self.model_version}")
             else:
                 self.logger.info(f"{self.server_id} 此 slot 無收到模型，版本不變")
+
 
         next_slot_obs, next_slot_vids = self.get_vehicle_state(slot_ratio=slot_ratio, normalized_round=normalized_round)
         return action_mask, next_slot_obs, next_slot_vids
@@ -397,25 +406,52 @@ class EdgeServer(threading.Thread):
                 next_slot_obs, _ = self.get_vehicle_state(max_vehicles, normalized_num_slots, normalized_round)
             try:
                 after_loss = self.global_server.get_loss_for_edge(self.server_id)
-                raw_reward = self.prev_slot_loss - after_loss
-                scale = 30
-                round_factor = (1 + normalized_round) ** 1.5  
 
-                slot_reward = np.tanh(raw_reward * scale * round_factor)
+                # 1) 相對變化（正值=改善），避免不同尺度的 loss 造成回饋暴衝
+                rel_delta = (self.prev_slot_loss - after_loss) / max(self.prev_slot_loss, 1e-6)
+                # 2) 先做理性夾值，抑制極端雜訊（可依觀察調整到 1.0~2.0 之間）
+                rel_delta = float(np.clip(rel_delta, -1.5, 1.5))
+
+                # 3) 輕微晚期加權（讓後段的改善多一點權重，但不爆）
+                w_out = 0.5 + 0.5 * normalized_round  # ∈[0.5, 1.0]
+
+                # 4) 溫和 squashing；0.5 可依觀察調 0.5~1.0
+                slot_reward = float(np.tanh(rel_delta / 0.5)) * w_out
+                # 保險再夾
+                slot_reward = max(-1.0, min(1.0, slot_reward))
+                GLOBAL_LOW_CSV = "logs/low_level_slot_rewards.csv"
+                if not os.path.exists(GLOBAL_LOW_CSV):
+                    with open(GLOBAL_LOW_CSV, 'w', newline='', encoding='utf-8') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['global_round', 'server_id', 'slot', 'reward', 'rel_delta', 'prev_loss', 'after_loss', 'w_out'])
+
+                with open(GLOBAL_LOW_CSV, 'a', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        self.global_server.global_round,   # 目前全域 round
+                        self.server_id,
+                        i + 1,
+                        f"{slot_reward:.6f}",
+                        f"{rel_delta:.6f}",
+                        f"{self.prev_slot_loss:.6f}",
+                        f"{after_loss:.6f}",
+                        f"{w_out:.6f}"
+                    ])
 
 
-                
                 self.slot_rewards.append(slot_reward)
                 self.logger.info(
-                    f"{self.server_id} Slot {i+1} reward = {slot_reward:.4f}（raw={raw_reward:.4f}, loss {self.prev_slot_loss:.4f} → {after_loss:.4f}）"
+                    f"{self.server_id} Slot {i+1} reward = {slot_reward:.4f}（rel={rel_delta:.4f}, loss {self.prev_slot_loss:.4f} → {after_loss:.4f}, w_out={w_out:.3f}）"
                 )
                 with open(self.reward_log_path, 'a', encoding='utf-8') as f:
-                    f.write(f"{i+1},{slot_reward:.6f},{raw_reward:.6f},{self.prev_slot_loss:.6f},{after_loss:.6f}\n")
+                    f.write(f"{i+1},{slot_reward:.6f},{rel_delta:.6f},{self.prev_slot_loss:.6f},{after_loss:.6f},{w_out:.6f}\n")
+
                 self.prev_slot_loss = after_loss
             except Exception as e:
                 self.logger.warning(f"{self.server_id} 無法計算 Slot {i+1} reward: {e}")
                 slot_reward = 0.0
                 self.slot_rewards.append(0.0)
+
 
             #Log slot transition 詳細資訊
             self.rl_logger.info(f"\n[{self.server_id}] Slot {i+1} transition:")
@@ -436,8 +472,14 @@ class EdgeServer(threading.Thread):
                 torch.tensor(next_slot_obs, dtype=torch.float32),                     # (V,6)
                 torch.tensor(False)                                                   # bool
             )
+        # --- NEW: 鎖內取快照 ---
+        with self.model_lock:
+            upload_snapshot = {k: v.detach().cpu().clone() for k, v in self.model.state_dict().items()}
 
-        self.global_server.received_models.append((self.model.state_dict(), self.model_version))
+        # 建議：透過 global 的 aggregate_lock 附加，避免和聚合同步撞
+        with self.global_server.aggregate_lock:
+            self.global_server.received_models.append((upload_snapshot, self.model_version))
+            
         self.logger.info(f"{self.server_id} 已上傳模型 v{self.model_version} 給 Global Server")
 
         current_version = self.global_server.model_version

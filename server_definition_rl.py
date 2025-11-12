@@ -70,6 +70,12 @@ class EdgeServer(threading.Thread):
         os.makedirs("logs", exist_ok=True)
         with open(self.reward_log_path, 'w', encoding='utf-8') as f:
             f.write("slot,reward,rel_delta,prev_loss,after_loss,w_out\n")
+        
+        self.edge_loss_csv = f"logs/{self.server_id}_loss.csv"
+        if not os.path.exists(self.edge_loss_csv):
+            with open(self.edge_loss_csv, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(['round', 'loss'])
 
         
         if self.rl_logger.hasHandlers():
@@ -87,7 +93,18 @@ class EdgeServer(threading.Thread):
         
         self.logger.info(f"attach_low_level_agent: epsilon = {epsilon}")
 
-    
+   
+    def log_edge_loss_for_current_round(self):
+        try:
+            loss = self.global_server.get_loss_for_edge(self.server_id)
+        except Exception as e:
+            self.logger.warning(f"{self.server_id} 記錄 edge loss 失敗：{e}")
+            return
+        with open(self.edge_loss_csv, 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            writer.writerow([self.global_server.model_version, round(loss, 6)])
+        # self.logger.info(f"{self.server_id} 記錄 edge loss：round={self.global_server.global_round}, loss={loss:.6f}")
+        self.logger.info(f"{self.server_id} 記錄 edge loss：round={self.global_server.global_round}, loss={loss:.6f}")
     def collect_uploaded_models(self):
         upload_dir = "uploads"
         if not os.path.exists(upload_dir):
@@ -252,14 +269,38 @@ class EdgeServer(threading.Thread):
         slot_obs_tensor = torch.tensor(slot_obs, dtype=torch.float32).unsqueeze(0).to(self.low_level_device)  # (1,V,F)
         existence_mask = torch.tensor([v[5] for v in slot_obs], dtype=torch.float32, device=self.low_level_device)  # (V,)
 
+        # with torch.no_grad():
+        #     q_values = self.low_level_dqn(slot_obs_tensor).squeeze(0)  # (V,2)
+        #     greedy = (q_values[:, 1] > q_values[:, 0]).to(torch.int64) # (V,)
+
+        # random_mask = torch.randint(0, 2, greedy.shape, device=self.low_level_device)
+        # eps_draw = torch.rand_like(greedy, dtype=torch.float32)
+        # action_mask = torch.where(eps_draw < self.low_level_epsilon, random_mask, greedy)
+        # action_mask = (action_mask * (existence_mask > 0).to(torch.int64))
         with torch.no_grad():
             q_values = self.low_level_dqn(slot_obs_tensor).squeeze(0)  # (V,2)
-            greedy = (q_values[:, 1] > q_values[:, 0]).to(torch.int64) # (V,)
+            # 以 "選/不選" 的 Q 差當作 logit；夾住避免數值爆
+            dQ = (q_values[:, 1] - q_values[:, 0]).clamp(-10, 10)
 
-        random_mask = torch.randint(0, 2, greedy.shape, device=self.low_level_device)
-        eps_draw = torch.rand_like(greedy, dtype=torch.float32)
-        action_mask = torch.where(eps_draw < self.low_level_epsilon, random_mask, greedy)
-        action_mask = (action_mask * (existence_mask > 0).to(torch.int64))
+        # 用 self.low_level_epsilon 當「溫度」控制，早期大、後期小（保持下限避免過早完全貪婪）
+        tau = float(max(0.15, min(0.60, self.low_level_epsilon)))  # 可改範圍 0.15~0.60
+        probs = torch.sigmoid(dQ / tau)  # 每台車被選中的機率 ∈ (0,1)
+
+        # 保留一點固定探索（避免探索歸零）
+        # eps_floor = 0.05  # 3%~7% 都可
+        eps_floor = float(max(0.02, min(0.08, 0.25 * self.low_level_epsilon)))
+        probs = probs * (1.0 - eps_floor) + 0.5 * eps_floor
+        probs = probs * existence_mask
+
+        # 依機率抽樣動作（1=選，0=不選）
+        action_mask = torch.bernoulli(probs).to(torch.int64)
+
+        # 只對存在的車有效
+        action_mask = action_mask * (existence_mask > 0).to(torch.int64)
+
+        # （可選）觀察一下平均選擇機率
+        # self.logger.info(f"[{self.server_id}] tau={tau:.3f}, p_mean={probs.mean().item():.3f}")
+        self.logger.info(f"[{self.server_id}] tau={tau:.3f}, p_mean={probs.mean().item():.3f}, selected={int(action_mask.sum().item())}")
 
         # 依 slot_vids 對齊選車（修正 bit 判斷）
         selected_vehicles = []
@@ -483,11 +524,12 @@ class EdgeServer(threading.Thread):
         self.logger.info(f"{self.server_id} 已上傳模型 v{self.model_version} 給 Global Server")
 
         current_version = self.global_server.model_version
+        self.log_edge_loss_for_current_round()
         while self.global_server.model_version <= current_version:
             time.sleep(0.1)
 
         self.update_model(self.global_server.model.state_dict(), self.global_server.model_version)
-
+       
         self.model_version = 1
 
 

@@ -289,18 +289,18 @@ def main():
     NUM_EPISODES = 500
     TRAIN_REPEAT_PER_STEP = 5
     MAX_EPISODES_BEFORE_RESTART = 4
-    TAU = 0.01
+    TAU = 0.005
     MAX_VEHICLES = 10
     
-    LOW_LEVEL_BATCH_SIZE = 32
-    LOW_LEVEL_LR = 1e-4
+    LOW_LEVEL_BATCH_SIZE = 64
+    LOW_LEVEL_LR = 2e-4
     LOW_LEVEL_GAMMA = 0.99
-    LOW_LEVEL_TAU = 0.01
+    LOW_LEVEL_TAU = 0.005
     LOW_LEVEL_TRAIN_REPEAT = 50
     LOW_LEVEL_BUFFER_CAPACITY = 10000
     
-    LOW_LEVEL_EPSILON_START = 1.0
-    LOW_LEVEL_EPSILON_END = 0.05
+    LOW_LEVEL_EPSILON_START = 0.6
+    LOW_LEVEL_EPSILON_END = 0.2
     LOW_LEVEL_EPSILON_DECAY = 0.99
     low_level_epsilon = LOW_LEVEL_EPSILON_START
 
@@ -363,6 +363,29 @@ def main():
         print(log_msg)
         with open('logs/high_level_training_log.txt', 'a') as f:
             f.write(log_msg)
+        # === After load_checkpoint(...) ===
+    resumed = checkpoint is not None
+
+    if resumed:
+        # 1) 覆寫 optimizer 超參（不需要重建 optimizer）
+        for g in optimizer.param_groups:
+            g["lr"] = LR
+            # g["betas"] = (0.9, 0.999)          # 如有更動再開
+            # g["weight_decay"] = 0.0            # 如有更動再開
+        for g in low_level_optimizer.param_groups:
+            g["lr"] = LOW_LEVEL_LR
+            # g["betas"] = (0.9, 0.999)
+            # g["weight_decay"] = 0.0
+
+        # 2) 以新的上下限夾住當前 epsilon，避免沿用到過大的歷史值
+        epsilon = max(EPSILON_END, min(EPSILON_START, epsilon))
+        low_level_epsilon = max(LOW_LEVEL_EPSILON_END, min(LOW_LEVEL_EPSILON_START, low_level_epsilon))
+
+        # 3) 讓 env / edge 立刻用到新的 low-level ε（Edge 內會再映射到 tau）
+        env.epsilon = low_level_epsilon
+        # for edge in env.edge_servers:
+        #     edge.low_level_epsilon = env.epsilon
+
     else:
         target_dqn.load_state_dict(dqn.state_dict())
         low_level_target_dqn.load_state_dict(low_level_dqn.state_dict())
@@ -374,8 +397,8 @@ def main():
             writer = csv.writer(f)
             writer.writerow(['episode', 'avg_reward', 'avg_loss', 'epsilon'])
             
-    if start_episode == 1:
-        print("[Baseline] : 執行一次隨機 baseline 評估...")
+    if start_episode == 1000:
+        print("[Baseline] : 執行一 評估...")
 
         # 建立環境
         env = FederatedGymEnv(create_servers_fn, max_slots=MAX_SLOTS, num_agents=NUM_AGENTS)
@@ -414,7 +437,7 @@ def main():
                 f.write(f"[Baseline] 使用 high ε = {env.epsilon}, low ε = {[edge.low_level_epsilon for edge in env.edge_servers]}\n")
 
         os.makedirs('evaluation_logs', exist_ok=True)
-        eval_filename = 'evaluation_logs/eval_episode_0_full_rounds.csv'
+        eval_filename = 'evaluation_logs/eval_episode_0_4_full_rounds.csv'
         with open(eval_filename, 'w', newline='') as f:
             writer = csv.DictWriter(f, fieldnames=['round', 'global_loss', 'global_accuracy'])
             writer.writeheader()
@@ -422,7 +445,8 @@ def main():
 
         print(f"[Baseline] 完成 baseline，結果寫入 {eval_filename}")
 
-        start_episode = 1
+    
+    
 
 
     # 清空buffer
@@ -433,6 +457,14 @@ def main():
     # if hasattr(low_level_replay_buffer, "position"):
     #     low_level_replay_buffer.position = 0
     # epsilon = EPSILON_START
+    print(f"[Resume] HL lr={optimizer.param_groups[0]['lr']}, "
+      f"LL lr={low_level_optimizer.param_groups[0]['lr']}, "
+      f"HL eps={epsilon:.3f}, LL eps={low_level_epsilon:.3f}")
+    
+    if start_episode  == 80:
+        print ("test")
+        evaluate_agent(dqn, env, start_episode)
+        safe_exit()
 
     for episode in range(start_episode, NUM_EPISODES):
         gc.collect()

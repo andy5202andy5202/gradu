@@ -1,0 +1,17 @@
+tag,avg_global_loss,avg_slot_reward,high_level_loss,low_level_loss,timestamp,csv
+ep10_greedy,2.1958245237668357,,,,1754967591,evaluation_logs/eval_episode_10_full_rounds.csv
+ep20_greedy,2.0323310758823006,,,,1754995156,evaluation_logs/eval_episode_20_full_rounds.csv
+ep30_greedy,2.0675592822906297,,,,1755048287,evaluation_logs/eval_episode_30_full_rounds.csv
+ep50_greedy,2.1284718614358167,,,,1755128767,evaluation_logs/eval_episode_50_full_rounds.csv
+ep40_greedy,2.1863630056381225,,,,1755175242,evaluation_logs/eval_episode_40_full_rounds.csv
+ep50_greedy,2.09075870070702,,,,1755203825,evaluation_logs/eval_episode_50_full_rounds.csv
+ep60_greedy,2.0698377626064492,,,,1755232854,evaluation_logs/eval_episode_60_full_rounds.csv
+ep70_greedy,2.060061877965927,,,,1755410578,evaluation_logs/eval_episode_70_full_rounds.csv
+ep80_greedy,2.0549613543045826,,,,1755437457,evaluation_logs/eval_episode_80_full_rounds.csv
+ep90_greedy,2.1522278953821234,,,,1755465082,evaluation_logs/eval_episode_90_full_rounds.csv
+ep86_greedy,2.060868400029647,,,,1755482644,evaluation_logs/eval_episode_86_full_rounds.csv
+ep87_greedy,2.0888371511911736,,,,1755487177,evaluation_logs/eval_episode_87_full_rounds.csv
+ep90_greedy,2.1469609679319923,,,,1755515109,evaluation_logs/eval_episode_90_full_rounds.csv
+ep85_greedy,2.0957498727700647,,,,1755526372,evaluation_logs/eval_episode_85_full_rounds.csv
+ep84_greedy,2.0866856897488617,,,,1755531156,evaluation_logs/eval_episode_84_full_rounds.csv
+ep83_greedy,2.042897923787435,,,,1755580850,evaluation_logs/eval_episode_83_full_rounds.csv

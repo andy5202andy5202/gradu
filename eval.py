@@ -5,7 +5,7 @@ import numpy as np
 import math
 
 eval_dir = 'evaluation_logs'
-target_eps = [0,10]
+target_eps = [10,20,30,40,50,60,70,80,90,100]
 colors = plt.cm.viridis(np.linspace(0, 1, len(target_eps)))
 rounds = list(range(1, 16))  # 固定 x 軸為 1~20
 
@@ -41,7 +41,7 @@ plt.figure(figsize=(10, 5))
 for idx, ep in enumerate(target_eps):
     df = pd.read_csv(os.path.join(eval_dir, f"eval_episode_{ep}_full_rounds.csv"))
     plt.plot(rounds, df['global_accuracy'][:15], marker='x', linestyle='-', color=colors[idx], label=f"Eval Ep {ep}")
-plt.title("Global Accuracy over 20 Rounds")
+plt.title("Global Accuracy over 15 Rounds")
 plt.xlabel("Round")
 plt.ylabel("Accuracy (%)")
 plt.xticks(rounds)
